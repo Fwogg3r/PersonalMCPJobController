@@ -16,3 +16,4 @@ credentials.enc
 # owner-only material (history, personal setup) stays local
 private/
 agentcontroller.toml
+.claude/
