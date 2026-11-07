@@ -63,7 +63,7 @@ The Discord front door lets you talk to pmjc from the Discord app on any device.
 2. **Make the bot** at <https://discord.com/developers/applications> → New Application → Bot:
    - Reset the token and copy it.
    - Turn on **Message Content Intent** under Privileged Gateway Intents.
-   - Under OAuth2 → URL Generator, tick `bot`, then the permissions *View Channels*, *Send Messages*, *Send Messages in Threads*, *Create Public Threads* and *Read Message History*. Open the URL and add the bot to your server.
+   - Under OAuth2 → URL Generator, tick `bot`, then the permissions *View Channels*, *Send Messages*, *Send Messages in Threads*, *Create Public Threads*, *Manage Threads* (for `/fwog close` and `delete`) and *Read Message History*. Also tick the `applications.commands` scope so the slash commands appear. Open the URL and add the bot to your server.
 3. **Store the token:** `pmjc auth set discord` (or the dashboard). Set `notify_channel_id` to the alerts channel if you want results there, and add `discord` to `notify_channels` in `settings.yaml`.
 4. **Get the ids:** Discord Settings → Advanced → Developer Mode on. Then right-click yourself → Copy User ID, and right-click `#pmjc` → Copy Channel ID.
 5. **Turn it on and restart the service:**
@@ -74,6 +74,23 @@ The Discord front door lets you talk to pmjc from the Discord app on any device.
 
 How it works:
 - **Conversations.** Each message in `#pmjc` starts a Discord thread and a pmjc thread. Reply in that Discord thread to continue; the last few exchanges go back to the model. DMs to the bot work too, one conversation per DM until you send `new`.
+- **Threads.** A message in any Discord thread under a door channel, including one you create in the Discord UI, starts its own pmjc thread on the first message. Deleting the Discord thread closes the pmjc thread.
+- **Slash commands** (guild commands, registered when the bot connects; owner only, everyone else gets an ephemeral refusal):
+
+  | Command | Does |
+  |---|---|
+  | `/tool name args` | Runs a tool directly with the door's scopes, no model and no cost. Act tools still post Approve/Deny buttons. `args` is a JSON object. |
+  | `/fwog new title` | New thread in the door channel, bound to a new pmjc thread |
+  | `/fwog close` / `delete` | Archive and lock this thread / delete it after a Confirm button; the pmjc thread is closed |
+  | `/fwog trace on\|off` | One `-# tool name(args) -> status` line per tool call in this thread (never results). Default: `discord_door.trace` |
+  | `/fwog model provider` / `private on\|off` | Provider (`auto` or a routing id) and local-only for this thread |
+  | `/fwog autoapprove add\|remove\|list` | Edit `auto_approve`: those act tools then run without a button, for every caller |
+  | `/fwog jobs list\|run\|enable\|disable`, `watches list\|cancel` | Manage jobs and watches |
+  | `/fwog notify here` | Send pmjc notifications to this channel, Discord first |
+  | `/fwog switch name on\|off` | `monitoring`, `scheduled_jobs`, `auto_start_local` |
+  | `/fwog friend add name user_id` / `list` | Remember a Discord user as a contact |
+  | `/fwog status` | Door, providers, pending approvals |
+- **Friends.** The model knows it can message someone with `discord_dm` (sent as the bot, only to people who share a server with it) or `pmjc_handoff` (a one-tap link so you send it as yourself). Both are act tools, so each needs your approval.
 - **Who it answers.** Only the owner ids you set. pmjc never reads anyone else's messages, even in the same channel.
 - **Approvals.** Act tools need approval, as they do for every remote caller. The bot posts Approve/Deny buttons in the conversation, and only an owner's click counts. While the door is connected, other approval notifications sent to Discord use buttons too, so they need no public URL.
 - **Models.** Requests go through the normal routing: local first, then `claude -p`, then paid APIs if you enabled them. The reply footer names the model that answered.

@@ -4,7 +4,9 @@ Off by default (settings.discord_door). The service opens an outbound websocket 
 inbound port or tunnel is needed. Only messages from `owner_user_ids` are read; everyone else is ignored.
 
 - A message in one of `channel_ids` starts a Discord thread and a pmjc thread. Replies in that Discord thread
-  continue the conversation; the last `history_turns` exchanges go back to the model.
+  continue the conversation; the last `history_turns` exchanges go back to the model. A message in any thread under
+  a door channel (also one made in the Discord UI) starts its own pmjc thread the same way.
+- Slash commands (/tool, /fwog; see discord_commands) and an optional per-thread tool trace.
 - A DM to the bot works the same way, one conversation per DM until you send `new`.
 - Each message runs through ask() (connectors, watches, jobs) with the configured scopes. Act tools still need
   approval: the door posts Approve/Deny buttons in the conversation, and only an owner's click counts.
@@ -19,19 +21,24 @@ import logging
 import random
 import time
 
-from . import agent, config, db, executor, registry
+from . import agent, config, db, executor, memory, registry
 from .auth import Caller
 
 log = logging.getLogger("pmjc.discord_door")
 
 GATEWAY = "wss://gateway.discord.gg/?v=10&encoding=json"
-INTENTS = (1 << 9) | (1 << 12) | (1 << 15)  # guild messages, direct messages, message content
+INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15)  # guilds (threads), guild messages, direct messages, message content
 FATAL_CLOSE = {4004: "invalid bot token", 4010: "invalid shard", 4011: "sharding required", 4012: "bad API version",
                4013: "invalid intents", 4014: "Message Content intent not enabled in the Developer Portal"}
 NEW_WORDS = {"new", "/new", "!new", "reset"}
 MAX_MSG = 2000
 DDL = "CREATE TABLE IF NOT EXISTS discord_door (channel_id TEXT PRIMARY KEY, thread_id TEXT, created REAL)"
+PREFS_DDL = "CREATE TABLE IF NOT EXISTS discord_door_prefs (channel_id TEXT PRIMARY KEY, prefs TEXT)"
 BUTTON_PREFIX = "pmjc:"
+FRIENDS_NOTE = ("You are talking to your owner through Discord. To message someone else you can use discord_dm (sent "
+                "AS THE BOT, only to people who share a server with it) or pmjc_handoff (a one-tap link so the owner "
+                "sends it as themselves). Never claim to have sent something as the owner. Both are act tools, so the "
+                "owner approves each one.")
 
 _door: Door | None = None
 
@@ -77,7 +84,13 @@ class Door:
         self.connected = False
         self._locks: dict[str, asyncio.Lock] = {}
         self._tasks: set[asyncio.Task] = set()
+        self.app_id = ""
+        self.parents: dict[str, str] = {}  # thread id -> parent channel id
+        self.guilds: dict[str, str] = {}  # channel id -> guild id
         db.x(DDL)
+        db.x(PREFS_DDL)
+        from .discord_commands import Commands
+        self.commands = Commands(self)
 
     # ---- conversation map
     def thread_for(self, channel_id: str) -> str | None:
@@ -90,6 +103,48 @@ class Door:
 
     def unbind(self, channel_id: str) -> None:
         db.x("DELETE FROM discord_door WHERE channel_id=?", channel_id)
+
+    def prefs(self, channel_id: str) -> dict:
+        r = db.q("SELECT prefs FROM discord_door_prefs WHERE channel_id=?", channel_id)
+        return json.loads(r[0]["prefs"]) if r else {}
+
+    def set_pref(self, channel_id: str, key: str, value) -> None:
+        p = self.prefs(channel_id)
+        p[key] = value
+        db.x("INSERT OR REPLACE INTO discord_door_prefs(channel_id, prefs) VALUES(?,?)", channel_id, json.dumps(p))
+
+    async def channel_info(self, channel_id: str) -> dict:
+        try:
+            info = await self.api("GET", f"/channels/{channel_id}", None) or {}
+        except Exception:
+            log.warning("could not look up channel %s", channel_id)
+            return {}
+        if info.get("parent_id"):
+            self.parents[channel_id] = info["parent_id"]
+        if info.get("guild_id"):
+            self.guilds[channel_id] = info["guild_id"]
+        return info
+
+    async def parent_of(self, channel_id: str) -> str | None:
+        if channel_id not in self.parents:
+            await self.channel_info(channel_id)
+        return self.parents.get(channel_id)
+
+    async def guild_of(self, channel_id: str) -> str | None:
+        if channel_id not in self.guilds:
+            await self.channel_info(channel_id)
+        return self.guilds.get(channel_id)
+
+    async def in_door_thread(self, channel_id: str) -> bool:
+        """A Discord thread under a door channel (or one already bound to a pmjc thread)."""
+        return self.thread_for(channel_id) is not None or await self.parent_of(channel_id) in self.cfg.channel_ids
+
+    async def close_thread(self, channel_id: str) -> None:
+        tid = self.thread_for(channel_id)
+        if tid:
+            with contextlib.suppress(ValueError):
+                memory.thread_set_status(tid, "closed")
+        self.unbind(channel_id)
 
     def is_owner(self, user_id: str | None) -> bool:
         return bool(user_id) and str(user_id) in {str(u) for u in self.cfg.owner_user_ids}
@@ -112,7 +167,8 @@ class Door:
             return
         ch = m["channel_id"]
         is_dm = not m.get("guild_id")
-        if self.thread_for(ch) is None and not is_dm and ch not in self.cfg.channel_ids:
+        if self.thread_for(ch) is None and not is_dm and ch not in self.cfg.channel_ids \
+                and await self.parent_of(ch) not in self.cfg.channel_ids:
             return  # a channel or thread the door doesn't own
         lock = self._locks.setdefault(ch, asyncio.Lock())
         async with lock:  # one run at a time per conversation, in order
@@ -125,18 +181,22 @@ class Door:
             self.unbind(ch)
             await self.send(ch, "Started a new conversation.")
             return
-        if tid is None and not is_dm:  # a new message in a front-door channel: give it its own Discord thread
+        if tid is None and not is_dm and ch in self.cfg.channel_ids:  # new message in a door channel: its own thread
             name = " ".join(text.split())[:90] or "pmjc"
             t = await self.api("POST", f"/channels/{ch}/messages/{m['id']}/threads",
                                {"name": name, "auto_archive_duration": 1440})
             reply_ch = t["id"]
         caller = Caller(f"discord:{user_id}", "remote", set(self.cfg.scopes))
+        prefs = self.prefs(reply_ch)
+        if prefs.get("trace", self.cfg.trace):
+            caller.on_tool = lambda name, args, status: self._trace(reply_ch, name, args, status)
         started = time.time()
         typing = asyncio.create_task(self._typing(reply_ch))
         try:
             from . import ask as ask_mod
-            res = await ask_mod.ask(caller, text, private=self.cfg.private, thread_id=tid,
-                                    history_turns=self.cfg.history_turns)
+            res = await ask_mod.ask(caller, text, private=bool(prefs.get("private", self.cfg.private)), thread_id=tid,
+                                    history_turns=self.cfg.history_turns, extra_system=FRIENDS_NOTE,
+                                    provider_order=[prefs["provider"]] if prefs.get("provider") else None)
         except agent.NoProvider as e:
             await self.send(reply_ch, f"No model is available right now: {e}")
             return
@@ -159,7 +219,15 @@ class Door:
                       res["thread_id"], started - 1):
             await self.send(reply_ch, approval_text(a), components=approval_buttons(a["id"]))
 
+    async def _trace(self, channel_id: str, name: str, args: dict, status: str) -> None:
+        from .discord_commands import clip
+        shown = clip(json.dumps(args, default=str), 80) if args else ""
+        await self.send(channel_id, f"-# tool {name}({shown}) -> {status}")
+
     async def on_interaction(self, i: dict) -> None:
+        if i.get("type") in (2, 4):  # slash command / autocomplete
+            await self.commands.handle(i)
+            return
         if i.get("type") != 3:  # message component (button)
             return
         cid = (i.get("data") or {}).get("custom_id", "")
@@ -171,6 +239,9 @@ class Door:
             await self.api("POST", cb, {"type": 4, "data": {"content": "Only the owner can decide this.", "flags": 64}})
             return
         kind, _, aid = cid[len(BUTTON_PREFIX):].partition(":")
+        if kind in ("del", "keep"):
+            await self._delete_choice(i, cb, kind == "del", aid)
+            return
         await self.api("POST", cb, {"type": 6})  # acknowledge within 3 s; the tool may take longer
         res = await executor.decide(aid, kind == "a", f"discord:{user['id']}")
         status = res.get("status", "?")
@@ -184,6 +255,14 @@ class Door:
         app_id = i.get("application_id") or self.bot_id
         await self.api("PATCH", f"/webhooks/{app_id}/{i['token']}/messages/@original",
                        {"content": body[:MAX_MSG], "components": [], "allowed_mentions": {"parse": []}})
+
+    async def _delete_choice(self, i: dict, cb: str, confirm: bool, channel_id: str) -> None:
+        if not confirm:
+            await self.api("POST", cb, {"type": 7, "data": {"content": "Kept.", "components": []}})
+            return
+        await self.api("POST", cb, {"type": 7, "data": {"content": "Deleting...", "components": []}})
+        await self.close_thread(channel_id)
+        await self.api("DELETE", f"/channels/{channel_id}", None)
 
     # ---- REST helpers
     async def send(self, channel_id: str, content: str, components: list | None = None) -> dict:
@@ -287,8 +366,15 @@ class Gateway:
             self.session_id = d["session_id"]
             self.resume_url = d.get("resume_gateway_url")
             self.door.bot_id = d["user"]["id"]
+            self.door.app_id = (d.get("application") or {}).get("id") or self.door.bot_id
             self.door.connected = True
             log.info("discord door connected as %s", d["user"].get("username"))
+            self.door.spawn(self._guard(self.door.commands.register()))
+        elif t == "THREAD_CREATE" and d.get("parent_id"):
+            self.door.parents[d["id"]] = d["parent_id"]
+        elif t == "THREAD_DELETE":
+            self.door.spawn(self._guard(self.door.close_thread(d["id"])))
+            self.door.parents.pop(d["id"], None)
         elif t == "RESUMED":
             self.door.connected = True
         elif t == "MESSAGE_CREATE":
