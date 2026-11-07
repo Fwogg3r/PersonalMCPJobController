@@ -16,27 +16,56 @@ you                                    ──► dashboard · CLI      ┘      
 - **Safe by default.** Tools that change things need your approval (dashboard, phone notification or link). Runs that read third-party content can't send data out. Tokens are scoped, every call is audited, and there's a kill switch.
 - **Always on.** `pmjc service install` starts it at logon or boot and restarts it if it stops (Windows Task Scheduler, systemd, launchd).
 
-## Quick start
+## Set up with an AI agent
 
-Requires [uv](https://docs.astral.sh/uv/). Python 3.11+ is installed by uv if needed.
+Open a coding agent (Claude Code, Codex, Cursor, Gemini CLI, ...) in an empty folder and paste:
+
+> Clone https://github.com/Fwogg3r/PersonalMCPJobController, then follow its AGENTS.md section "Setting it up for a user" to install pmjc on this machine, run it as a service, and connect yourself to it over MCP. Give me the admin token privately, and tell me which services I can connect next. Don't enter any of my passwords or API keys yourself; I'll type them into the dashboard.
+
+[AGENTS.md](AGENTS.md) gives the agent the exact commands, the checks to run, and the rules: secrets are yours to enter, and nothing turns on background activity unasked.
+
+## Set up by hand
+
+Requirements: [uv](https://docs.astral.sh/uv/) (it installs Python 3.11+ if needed) and git. Windows 11 is fully supported; Linux and macOS run everything except the Windows notification connector.
 
 ```bash
 git clone https://github.com/Fwogg3r/PersonalMCPJobController
 cd PersonalMCPJobController
-uv sync --all-extras          # or: uv sync --extra windows / --extra browser
-uv run pmjc setup             # creates your data folder and prints an admin token (once)
-uv run pmjc serve             # dashboard at http://127.0.0.1:8770/
+uv sync --all-extras          # Windows. Linux/macOS: uv sync --extra browser
+uv run pmjc setup             # creates your data folder and prints an admin token (shown once)
+uv run pmjc doctor            # checks Python, extras, notification access, model providers
+uv run pmjc serve             # dashboard at http://127.0.0.1:8770/  (Ctrl+C to stop)
 ```
 
-Paste the admin token into the dashboard. Connect services under **Connectors**, order your models under **Routing**, and create jobs under **Jobs**. When it works, make it permanent:
+Paste the admin token into the dashboard. Then:
+- connect services under **Connectors**;
+- order your models under **Routing**;
+- choose what may run on its own under **Settings**. Everything starts off.
+
+When it works, make it permanent:
 
 ```bash
-uv run pmjc service install
+uv run pmjc service install   # starts at logon/boot and restarts itself; `pmjc service status` to check
+```
+
+Connect your agents with the table in [Connect your agents](#connect-your-agents). For Claude Code on the same machine:
+
+```bash
+claude mcp add pmjc -- uv run --directory "$PWD" pmjc mcp
 ```
 
 Optional:
-- Browser: `uv run playwright install chromium`, then `uv run pmjc browser login https://www.messenger.com`.
-- Claude on your plan: run `claude setup-token`, then `uv run pmjc auth secret claude.oauth_token`.
+- **Browser:** `uv run playwright install chromium`, then `uv run pmjc browser login https://www.messenger.com`.
+- **Claude on your plan for jobs:** run `claude setup-token`, then `uv run pmjc auth secret claude.oauth_token`.
+- **Your other machines:** `uv run pmjc ssh add nas --host 192.0.2.10 --user admin --key ~/.ssh/id_ed25519`.
+- **Your own command-line tools:** copy [examples/connectors.d/command-tools.yaml](examples/connectors.d/command-tools.yaml) into `<data folder>/connectors.d/` and edit it.
+- **Phone and claude.ai access:** see [docs/REMOTE.md](docs/REMOTE.md).
+
+Where things live:
+- **Code:** this folder.
+- **Your data:** `%USERPROFILE%\.pmjc` on Windows, `~/.local/share/pmjc` elsewhere, or `PMJC_HOME`. That's settings, encrypted credentials, jobs, browser profile, logs and database.
+- **Updating:** `git pull && uv sync --all-extras`, then restart the service.
+- **Removing:** `uv run pmjc service uninstall`, then delete both folders.
 
 ## Nothing runs unless you ask
 
