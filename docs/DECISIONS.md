@@ -65,3 +65,10 @@ Design decisions and the reasoning behind them, newest first. Details of how eac
 - **Handoff over delegation.** When pmjc can't act as the user, it notifies them with a one-tap link rather than driving a more capable local agent. Delegation (`pmjc_delegate`) widens the attack surface (a second agent with browser control) and is deferred until it has its own threat model.
 - **Limits live next to the tools.** `limitations` and `native_alternatives` are appended to each tool's description, so a blank session sees them in the tool list; `pmjc_capabilities` adds the task-level routes and drops the native and workaround routes for tainted sessions, so third-party text can't steer a model toward them.
 - **Retention.** Closed threads are deleted after 90 days (`thread_retention_days`); `private` on a thread is sticky and keeps its asks on local models.
+
+## Discord front door
+- **Problem:** reach pmjc from any device without a tunnel, OAuth or a custom app, with push replies when watches and jobs finish.
+- **Decision:** the service connects to the Discord gateway with the user's own bot and routes the owner's messages through `ask()`. Considered instead: a long-running Claude Code session with a Discord channel plugin (more capable, but it uses the plan for every message, stalls on permission prompts when unattended, and bypasses pmjc's scopes and approvals), and only the claude.ai connector (no push).
+- **A small gateway client on `websockets` instead of discord.py:** the door needs identify, heartbeat, resume, messages and button clicks, about 100 lines with no new dependency. Revisit if it needs voice, sharding or slash commands.
+- **The owner's Discord id is the identity.** Messages from anyone else are never read. Runs are ordinary remote callers, so act tools still need approval; the approval is a button click checked against the owner id in the interaction, which the model can't produce.
+- **Continuity:** `ask()` takes `history_turns`, so the last exchanges of the pmjc thread go back into the prompt. Third-party items in that history taint the run, as reading them through a tool would.

@@ -83,6 +83,16 @@ class OAuthConfig(BaseModel):
     allowed: dict[str, list[str]] = Field(default_factory=dict)
 
 
+class DiscordDoorConfig(BaseModel):
+    """Chat with pmjc through your own Discord bot (see pmjc.discord_door). Off by default."""
+    enabled: bool = False
+    owner_user_ids: list[str] = Field(default_factory=list)  # only these Discord users are answered
+    channel_ids: list[str] = Field(default_factory=list)  # a message here starts a thread; DMs always work
+    scopes: list[str] = Field(default_factory=lambda: ["sources", "jobs", "actions"])
+    history_turns: int = 6  # earlier request/answer pairs passed back to the model
+    private: bool = False  # keep these conversations on local models
+
+
 class Settings(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8770
@@ -104,6 +114,7 @@ class Settings(BaseModel):
     audit_retention_days: int = 30
     thread_retention_days: int = 90  # closed threads older than this are deleted
     notify_channels: list[str] = Field(default_factory=list)  # connector ids used for approvals/alerts, in order
+    discord_door: DiscordDoorConfig = Field(default_factory=DiscordDoorConfig)
 
 
 _lock = threading.Lock()

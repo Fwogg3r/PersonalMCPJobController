@@ -103,7 +103,10 @@ async def _announce(aid: str, name: str, args: dict, by: str, reason: str) -> No
     approve = f"/approve/{aid}?sig={auth.sign('approve:' + aid)}"
     deny = f"/approve/{aid}?deny=1&sig={auth.sign('deny:' + aid)}"
     actions = [{"id": "approve", "title": "Approve", "path": approve}, {"id": "deny", "title": "Deny", "path": deny}]
+    from . import discord_door
     for ch in registry.get().channels():
+        if ch.id == "discord" and by.startswith("discord:") and discord_door.running():
+            continue  # the front door already posted buttons in the conversation
         try:
             await ch.notify("pmjc approval needed", msg, actions=actions)
             return

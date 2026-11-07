@@ -83,6 +83,14 @@ class Discord(Connector):
 
     async def notify(self, title, message, actions=None):
         ch = self.secret("notify_channel_id")
+        from .. import discord_door
+        aid = next((a["path"].split("/approve/")[1].split("?")[0] for a in (actions or [])
+                    if "/approve/" in a.get("path", "")), None)
+        if aid and discord_door.running():  # the door handles button clicks; no public URL needed
+            await self._api("POST", f"/channels/{ch}/messages",
+                            json={"content": f"**{title}**\n{message}"[:2000], "allowed_mentions": {"parse": []},
+                                  "components": discord_door.approval_buttons(aid)})
+            return
         public = config.load().public_url.rstrip("/")
         links = "".join(f"\n{a['title']}: <{public}{a['path']}>" for a in (actions or []) if public)
         await self.discord_send(ch, f"**{title}**\n{message}{links}")

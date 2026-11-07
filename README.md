@@ -209,7 +209,7 @@ Chrome sends notifications from every site under one app ID. To silence just one
 
 ## Remote access
 
-Step-by-step guide, including the Claude app connector and an iOS Shortcut: [docs/REMOTE.md](docs/REMOTE.md).
+Step-by-step guide, including the Claude app connector, an iOS Shortcut and chatting with pmjc through your own Discord bot: [docs/REMOTE.md](docs/REMOTE.md).
 
 pmjc only listens on `127.0.0.1`. To reach it from a phone or the claude.ai apps:
 1. Publish it through a tunnel you control, such as Cloudflare Tunnel or Tailscale Funnel.

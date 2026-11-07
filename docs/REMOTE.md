@@ -7,6 +7,7 @@ pmjc listens on `127.0.0.1` only. To reach it from elsewhere, publish it through
 | Claude iOS/Android/web/desktop (custom connector) | OAuth (Google or GitHub), identity allowlist | `https://<host>/mcp` |
 | iOS Shortcuts, other dashboards, scripts | pmjc token (`Authorization: Bearer`) | `POST https://<host>/api/ask`, `/api/tools/<name>`, `/api/watches/<id>` |
 | Other agent CLIs with remote MCP (Codex, Gemini CLI, Cursor, ...) | pmjc token header | `https://<host>/mcp` |
+| Discord (any device, no tunnel needed) | Your Discord user id, checked by the bot | Your bot, in your own server or its DMs ([section 6](#6-chat-from-discord)) |
 
 ## 1. Publish through a tunnel (Cloudflare example)
 1. In Cloudflare, open Networking → Tunnels → your tunnel → Routes → Add route → Published application.
@@ -53,3 +54,29 @@ If the request needs waiting, the answer says a watch was started. The result ar
 
 ## 5. Optional extra layer
 To keep `/api/*` off the open internet, put it behind WARP. Route the hostname through the device client's split tunnel, and have the Access policy require an enrolled device. Clients still send their pmjc token. `/mcp` must stay reachable for Claude's servers.
+
+## 6. Chat from Discord
+
+The Discord front door lets you talk to pmjc from the Discord app on any device. The service keeps an outbound connection to Discord, so this works without a tunnel or `public_url`.
+
+1. **Make a server** just for you (Discord → "+" → Create My Own). Add a text channel such as `#pmjc`. A second channel such as `#pmjc-alerts` can take job and watch results.
+2. **Make the bot** at <https://discord.com/developers/applications> → New Application → Bot:
+   - Reset the token and copy it.
+   - Turn on **Message Content Intent** under Privileged Gateway Intents.
+   - Under OAuth2 → URL Generator, tick `bot`, then the permissions *View Channels*, *Send Messages*, *Send Messages in Threads*, *Create Public Threads* and *Read Message History*. Open the URL and add the bot to your server.
+3. **Store the token:** `pmjc auth set discord` (or the dashboard). Set `notify_channel_id` to the alerts channel if you want results there, and add `discord` to `notify_channels` in `settings.yaml`.
+4. **Get the ids:** Discord Settings → Advanced → Developer Mode on. Then right-click yourself → Copy User ID, and right-click `#pmjc` → Copy Channel ID.
+5. **Turn it on and restart the service:**
+   ```
+   pmjc discord-door setup --owner <your user id> --channel <#pmjc channel id>
+   ```
+   Add `--private` to keep these conversations on local models.
+
+How it works:
+- **Conversations.** Each message in `#pmjc` starts a Discord thread and a pmjc thread. Reply in that Discord thread to continue; the last few exchanges go back to the model. DMs to the bot work too, one conversation per DM until you send `new`.
+- **Who it answers.** Only the owner ids you set. pmjc never reads anyone else's messages, even in the same channel.
+- **Approvals.** Act tools need approval, as they do for every remote caller. The bot posts Approve/Deny buttons in the conversation, and only an owner's click counts. While the door is connected, other approval notifications sent to Discord use buttons too, so they need no public URL.
+- **Models.** Requests go through the normal routing: local first, then `claude -p`, then paid APIs if you enabled them. The reply footer names the model that answered.
+- **Status:** `pmjc discord-door status` shows the settings and anything missing. Whether the bot is connected: `GET /api/discord-door` with an admin token, or the service log.
+
+Trust: anyone who controls your Discord account can use pmjc with the scopes you gave the door (default `sources,jobs,actions`; actions still need a button click). Turn on Discord two-factor sign-in, or narrow the door with `--scopes sources,jobs`.

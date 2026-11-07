@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from . import __version__, agent, auth, config, creds, db, executor, jobs, mcp_server, memory, registry, router
+from . import __version__, agent, auth, config, creds, db, discord_door, executor, jobs, mcp_server, memory, registry, router
 from .auth import Caller
 from .connector import Event
 
@@ -135,10 +135,12 @@ def create_app() -> FastAPI:
     async def lifespan(app):
         async with mcp_app.lifespan(app):
             engine.start()
+            discord_door.start()
             log.info("pmjc %s up with %d connectors, %d tools; data folder %s", __version__, len(reg.connectors), len(reg.tools()), config.home())
             try:
                 yield
             finally:
+                await discord_door.stop()
                 engine.shutdown()
                 await registry.get().close()
 
@@ -163,6 +165,11 @@ def create_app() -> FastAPI:
     async def health():
         return {"ok": True, "version": __version__, "connectors": len(registry.get().connectors),
                 "tools": len(registry.get().tools()), "jobs": len(engine.jobs)}
+
+    @app.get("/api/discord-door", tags=["meta"])
+    async def discord_door_status(_: Caller = Depends(admin_caller)):
+        """Whether the Discord front door is enabled and connected, and why not."""
+        return discord_door.status()
 
     # ---- tools (any agent framework)
     @app.get("/api/tools", tags=["tools"])

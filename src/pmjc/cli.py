@@ -21,8 +21,10 @@ svc_app = typer.Typer(help="Run pmjc as an always-on service.")
 browser_app = typer.Typer(help="pmjc's signed-in browser profile.")
 ssh_app = typer.Typer(help="Machines pmjc can reach over SSH.")
 appr_app = typer.Typer(help="Actions waiting for approval.")
+door_app = typer.Typer(help="Discord front door: chat with pmjc through your bot.")
 for name, sub in [("token", token_app), ("auth", auth_app), ("jobs", jobs_app), ("notifications", notif_app),
-                  ("service", svc_app), ("browser", browser_app), ("ssh", ssh_app), ("approvals", appr_app)]:
+                  ("service", svc_app), ("browser", browser_app), ("ssh", ssh_app), ("approvals", appr_app),
+                  ("discord-door", door_app)]:
     app.add_typer(sub, name=name)
 
 
@@ -417,6 +419,43 @@ def appr_approve(approval_id: str, deny: bool = typer.Option(False, "--deny")):
         finally:
             await registry.get().close()
     _out(asyncio.run(go()))
+
+
+# --- discord front door -------------------------------------------------------------------------------
+@door_app.command("setup")
+def door_setup(owner: list[str] = typer.Option(None, "--owner", help="Your numeric Discord user id (repeatable)."),
+               channel: list[str] = typer.Option(None, "--channel", help="Channel id where a message starts a "
+                                                 "conversation (repeatable). DMs to the bot always work."),
+               enable: bool = typer.Option(True, "--enable/--disable"),
+               private: Optional[bool] = typer.Option(None, "--private/--no-private",
+                                                      help="Keep these conversations on local models."),
+               scopes: Optional[str] = typer.Option(None, help="Comma-separated, default sources,jobs,actions.")):
+    """Chat with pmjc through your Discord bot. Restart the service afterwards."""
+    from . import config, discord_door
+    s = config.load()
+    d = s.discord_door
+    for v in (owner or []) + (channel or []):
+        if not v.isdigit():
+            raise typer.BadParameter(f"{v!r} isn't a numeric Discord id (turn on Developer Mode, then right-click and Copy ID)")
+    if owner:
+        d.owner_user_ids = list(owner)
+    if channel:
+        d.channel_ids = list(channel)
+    if private is not None:
+        d.private = private
+    if scopes:
+        d.scopes = [x.strip() for x in scopes.split(",") if x.strip()]
+    d.enabled = enable
+    config.save(s)
+    _out({**d.model_dump(), "problems": discord_door.problems(),
+          "next": "restart the service, then message the bot (schtasks /End /TN pmjc; schtasks /Run /TN pmjc)"})
+
+
+@door_app.command("status")
+def door_status():
+    """Settings and anything missing. Whether it's connected: GET /api/discord-door on the running service."""
+    from . import config, discord_door
+    _out({**config.load().discord_door.model_dump(), "problems": discord_door.problems()})
 
 
 # --- service ------------------------------------------------------------------------------------------
