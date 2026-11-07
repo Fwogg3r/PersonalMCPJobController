@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from . import __version__, agent, auth, config, creds, db, executor, jobs, mcp_server, registry, router
+from . import __version__, agent, auth, config, creds, db, executor, jobs, mcp_server, memory, registry, router
 from .auth import Caller
 from .connector import Event
 
@@ -87,6 +87,7 @@ class AskIn(BaseModel):
     text: str
     private: bool = False  # local models only
     providers: list[str] | None = None  # provider ids in the order to try
+    thread_id: str | None = None  # continue this thread; a new one is created (and returned) if omitted
 
 
 class AutomateIn(BaseModel):
@@ -125,6 +126,7 @@ def create_app() -> FastAPI:
     for h in logging.getLogger().handlers:
         h.addFilter(creds.Redactor())
     reg = registry.get()
+    memory.ensure_model_md()
     mcp = mcp_server.build(stdio=False)
     mcp_app = mcp.http_app(path="/mcp")
     engine = jobs.get_engine()
@@ -289,9 +291,12 @@ def create_app() -> FastAPI:
         from . import ask as ask_mod
         caller = Caller(f"ask:{c.name}", "remote", set(c.scopes))
         try:
-            return await ask_mod.ask(caller, body.text, private=body.private, provider_order=body.providers)
+            return await ask_mod.ask(caller, body.text, private=body.private, provider_order=body.providers,
+                                     thread_id=body.thread_id)
         except agent.NoProvider as e:
             raise HTTPException(503, str(e))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
     @app.get("/api/asks", tags=["ask"])
     async def asks(_: Caller = Depends(need("jobs"))):
@@ -428,6 +433,75 @@ def create_app() -> FastAPI:
         ev = Event(source="webhook", kind=name, title=str(body.get("title", name))[:300],
                    text=str(body.get("text", body.get("message", "")))[:20000], data=body)
         return {"accepted": await engine.ingest(ev)}
+
+    # ---- context: model.md, threads, notes, contacts (admin only; the dashboard's Context tab)
+    @app.get("/api/context/model-md", tags=["admin"])
+    async def get_model_md(_: Caller = Depends(admin_caller)):
+        return {"text": memory.model_md(), "hash": memory.model_md_hash()}
+
+    @app.put("/api/context/model-md", tags=["admin"])
+    async def put_model_md(body: dict[str, str], _: Caller = Depends(admin_caller)):
+        try:
+            memory.set_model_md(body.get("text", ""))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"ok": True, "hash": memory.model_md_hash()}
+
+    @app.get("/api/context/threads", tags=["admin"])
+    async def ctx_threads(include_closed: bool = False, _: Caller = Depends(admin_caller)):
+        return memory.threads_recent(limit=200, include_closed=include_closed)
+
+    @app.get("/api/context/threads/{tid}", tags=["admin"])
+    async def ctx_thread(tid: str, _: Caller = Depends(admin_caller)):
+        t = memory.thread_get(tid)
+        if "error" in t:
+            raise HTTPException(404, t["error"])
+        return t
+
+    @app.post("/api/context/threads/{tid}/close", tags=["admin"])
+    async def ctx_thread_close(tid: str, _: Caller = Depends(admin_caller)):
+        try:
+            return memory.thread_set_status(tid, "closed")
+        except ValueError as e:
+            raise HTTPException(404, str(e))
+
+    @app.get("/api/context/notes", tags=["admin"])
+    async def ctx_notes(query: str = "", _: Caller = Depends(admin_caller)):
+        return [n for n in memory.note_search(query, limit=500) if not n["key"].startswith("contact:")]
+
+    @app.put("/api/context/notes", tags=["admin"])
+    async def ctx_note_set(body: dict[str, Any], c: Caller = Depends(admin_caller)):
+        try:
+            tags = [str(t) for t in body.get("tags") or []]
+            return memory.note_set(str(body.get("key", "")), str(body.get("value", "")), tags, caller=c)
+        except (ValueError, PermissionError) as e:
+            raise HTTPException(400, str(e))
+
+    @app.delete("/api/context/notes/{key:path}", tags=["admin"])
+    async def ctx_note_delete(key: str, c: Caller = Depends(admin_caller)):
+        return memory.note_delete(key, caller=c)
+
+    @app.get("/api/context/contacts", tags=["admin"])
+    async def ctx_contacts(_: Caller = Depends(admin_caller)):
+        return {"active": memory.contact_find(""), "pending": memory.contacts_pending()}
+
+    @app.put("/api/context/contacts", tags=["admin"])
+    async def ctx_contact_set(body: dict[str, Any], c: Caller = Depends(admin_caller)):
+        try:
+            return memory.contact_set(str(body.get("name", "")), body.get("aliases") or [], body.get("handles") or {},
+                                      str(body.get("notes", "")), caller=c)
+        except (ValueError, PermissionError) as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/context/contacts/{name}/{decision}", tags=["admin"])
+    async def ctx_contact_decide(name: str, decision: str, _: Caller = Depends(admin_caller)):
+        if decision not in ("approve", "reject"):
+            raise HTTPException(400, "approve or reject")
+        return memory.contact_decide(name, decision == "approve")
+
+    @app.delete("/api/context/contacts/{name}", tags=["admin"])
+    async def ctx_contact_delete(name: str, _: Caller = Depends(admin_caller)):
+        return {"deleted": memory.contact_delete(name)}
 
     # ---- approvals
     @app.get("/api/approvals", tags=["admin"])

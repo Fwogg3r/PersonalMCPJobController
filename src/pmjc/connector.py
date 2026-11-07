@@ -114,6 +114,10 @@ class Connector:
     credentials: list[Field] = []
     platforms: list[str] | None = None  # e.g. ["win32"]; None = all
     docs_url: str = ""
+    # What this connector can't do, and what a client with better abilities should use instead. The registry appends
+    # both to every tool description so a model with no other context sees them in the tool list.
+    limitations: str = ""
+    native_alternatives: str = ""
 
     def __init__(self) -> None:
         self._http: httpx.AsyncClient | None = None
@@ -191,6 +195,7 @@ class Connector:
     def describe(self) -> dict:
         return {
             "id": self.id, "name": self.name, "description": self.description, "docs_url": self.docs_url,
+            "limitations": self.limitations, "native_alternatives": self.native_alternatives,
             "credentials": [f.__dict__ for f in self.credentials],
             "configured": self.configured(), "channel": self.is_channel,
             "tools": [{"name": m["name"], "scope": m["scope"], "egress": m["egress"], "untrusted_output": m["untrusted_output"],

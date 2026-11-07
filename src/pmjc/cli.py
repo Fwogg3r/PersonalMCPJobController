@@ -58,10 +58,11 @@ def mcp():
 @app.command()
 def setup():
     """First run: create the data folder and an admin token, and check what's available."""
-    from . import auth, config, creds, registry
+    from . import auth, config, creds, memory, registry
     s = config.load()
     creds.store()
     typer.echo(f"data folder: {config.home()}")
+    typer.echo(f"model.md (standing rules for every model; edit it in the dashboard): {memory.ensure_model_md()}")
     if not any("admin" in t["scopes"] and not t["revoked"] for t in auth.list_tokens()):
         tok = auth.create_token("dashboard", ["admin"])
         typer.echo(f"\nadmin token (shown once; paste it into the dashboard):\n  {tok}\n")
@@ -204,14 +205,16 @@ def call(name: str, args: str = typer.Option("{}", help="JSON arguments")):
 
 
 @app.command()
-def ask(text: str, private: bool = typer.Option(False, help="local models only")):
+def ask(text: str, private: bool = typer.Option(False, help="local models only"),
+        thread: Optional[str] = typer.Option(None, "--thread", help="continue this thread (t_xxxxxx)")):
     """Ask in plain language: answered now from your connectors, or a watch is started and its answer sent later."""
     from . import ask as ask_mod
     from . import auth, registry
 
     async def go():
         try:
-            return await ask_mod.ask(auth.Caller("ask:cli", "remote", {"sources", "jobs"}), text, private=private)
+            return await ask_mod.ask(auth.Caller("ask:cli", "remote", {"sources", "jobs"}), text, private=private,
+                                     thread_id=thread)
         finally:
             await registry.get().close()
     _out(asyncio.run(go()))

@@ -149,6 +149,7 @@ def load_command_connector(file: Path) -> type[Connector]:
     attrs: dict[str, Any] = {
         "id": spec["id"], "name": spec.get("name", spec["id"]), "description": spec.get("description", ""),
         "docs_url": spec.get("docs_url", ""), "spec": spec,
+        "limitations": spec.get("limitations", ""), "native_alternatives": spec.get("native_alternatives", ""),
         "credentials": [Field(**c) for c in spec.get("credentials") or []],
         "platforms": spec.get("platforms"),
     }

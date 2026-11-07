@@ -13,7 +13,7 @@ import secrets
 import time
 from typing import Any
 
-from . import auth, config, db, registry
+from . import auth, config, db, memory, registry
 from .auth import Caller
 
 log = logging.getLogger("pmjc.executor")
@@ -54,6 +54,8 @@ async def call_tool(caller: Caller, name: str, args: dict | None = None, reason:
         raise Denied(f"{name} sends data off the machine and this run has read untrusted content; "
                      "start a fresh run or ask the user")
     if t.scope == "act":
+        if memory.act_done(caller.thread_id, name, h):  # same act, same payload, same thread: the user decides again
+            return await request_approval(caller, name, args, "already done in this thread; approve only if it should repeat")
         auto = name in caller.auto_approve or name in config.load().auto_approve
         if caller.untrusted or (caller.needs_approval and not auto):
             why = reason or ("proposed by a run that read untrusted content" if caller.untrusted else "")
@@ -63,6 +65,7 @@ async def call_tool(caller: Caller, name: str, args: dict | None = None, reason:
         db.audit(caller.name, name, h, "ok")
         if t.scope == "act":
             caller.acted = True
+            memory.act_record(caller.thread_id, name, h)
         if t.untrusted_output:
             caller.untrusted = True  # taint is derived, not declared
         return res
@@ -75,14 +78,21 @@ async def request_approval(caller: Caller, name: str, args: dict, reason: str = 
     aid = secrets.token_urlsafe(9)
     ttl = config.load().approval_ttl_seconds
     now = time.time()
-    db.x("INSERT INTO approvals(id,tool,args,payload_hash,requested_by,reason,status,created,expires) "
-         "VALUES(?,?,?,?,?,?,?,?,?)", aid, name, json.dumps(args, default=str), payload_hash(name, args),
-         caller.name, reason[:500], "pending", now, now + ttl)
+    db.x("INSERT INTO approvals(id,tool,args,payload_hash,requested_by,reason,status,created,expires,thread_id) "
+         "VALUES(?,?,?,?,?,?,?,?,?,?)", aid, name, json.dumps(args, default=str), payload_hash(name, args),
+         caller.name, reason[:500], "pending", now, now + ttl, caller.thread_id)
+    _thread_log(caller.thread_id, f"approval requested for {name} (id {aid})")
     db.audit(caller.name, name, payload_hash(name, args), "approval_requested", aid)
     asyncio.create_task(_announce(aid, name, args, caller.name, reason))
     return {"status": "pending_approval", "approval_id": aid, "expires_in_seconds": ttl,
             "note": "A person must approve this in the pmjc dashboard or a notification. "
                     "Check later with pmjc_approval_status."}
+
+
+def _thread_log(tid: str | None, text: str) -> None:
+    """Approval outcomes go into the thread: tool name and status only, never arguments or results."""
+    if tid and memory.thread_exists(tid):
+        memory.thread_add(tid, "approval", text, author="pmjc", trust="owner")
 
 
 async def _announce(aid: str, name: str, args: dict, by: str, reason: str) -> None:
@@ -110,6 +120,7 @@ async def decide(aid: str, approve: bool, decided_by: str) -> dict:
         return {"status": a["status"], "result": a["result"]}
     if time.time() > a["expires"]:
         db.x("UPDATE approvals SET status='expired' WHERE id=?", aid)
+        _thread_log(a.get("thread_id"), f"approval for {a['tool']} expired")
         return {"status": "expired"}
     args = json.loads(a["args"])
     if payload_hash(a["tool"], args) != a["payload_hash"]:
@@ -122,6 +133,7 @@ async def decide(aid: str, approve: bool, decided_by: str) -> dict:
     if not approve:
         db.x("UPDATE approvals SET status='denied' WHERE id=?", aid)
         db.audit(decided_by, a["tool"], a["payload_hash"], "denied_by_user", aid)
+        _thread_log(a.get("thread_id"), f"{a['tool']} was denied by the user (approval {aid})")
         return {"status": "denied"}
     t = registry.get().tool(a["tool"])
     try:
@@ -129,10 +141,13 @@ async def decide(aid: str, approve: bool, decided_by: str) -> dict:
         out = json.dumps(res, default=str)[:20000]
         db.x("UPDATE approvals SET status='done', result=? WHERE id=?", out, aid)
         db.audit(decided_by, a["tool"], a["payload_hash"], "approved_ok", aid)
+        _thread_log(a.get("thread_id"), f"{a['tool']} was approved by the user and ran (approval {aid})")
+        memory.act_record(a.get("thread_id"), a["tool"], a["payload_hash"], aid)
         return {"status": "done", "result": res}
     except Exception as e:
         db.x("UPDATE approvals SET status='failed', result=? WHERE id=?", repr(e)[:2000], aid)
         db.audit(decided_by, a["tool"], a["payload_hash"], "approved_error", aid)
+        _thread_log(a.get("thread_id"), f"{a['tool']} was approved but failed (approval {aid})")
         return {"status": "failed", "error": repr(e)}
 
 

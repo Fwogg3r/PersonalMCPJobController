@@ -19,6 +19,8 @@ async def geocode(http, place: str) -> dict:
 
 class Weather(Connector):
     id = "weather"
+    limitations = 'Forecasts only (Open-Meteo); no radar, alerts or history.'
+    native_alternatives = 'a weather or search connector in your client.'
     name = "Weather (Open-Meteo)"
     description = "Current weather and daily forecast anywhere. Free, no account."
     docs_url = "https://open-meteo.com/"
@@ -50,6 +52,8 @@ class Weather(Connector):
 
 class Places(Connector):
     id = "places"
+    limitations = 'OpenStreetMap data: no reviews, ratings, prices or live opening status.'
+    native_alternatives = 'a maps or search connector in your client.'
     name = "Places (OpenStreetMap)"
     description = "Find restaurants, shops and other places near a location. Free, no account."
     docs_url = "https://wiki.openstreetmap.org/wiki/Overpass_API"
@@ -89,6 +93,8 @@ class Places(Connector):
 
 class GitHub(Connector):
     id = "github"
+    limitations = "Notifications, issue/PR search and comments only; what is visible depends on the token's scopes. No code access, no merging."
+    native_alternatives = 'a GitHub connector or the gh CLI in your client.'
     name = "GitHub"
     description = "Your GitHub notifications, issue/PR search and comments."
     docs_url = "https://github.com/settings/personal-access-tokens"
@@ -115,6 +121,6 @@ class GitHub(Connector):
 
     @tool(scope="act")
     async def github_comment(self, repo: str, number: int, body: str) -> dict:
-        """Comment on an issue or pull request (repo = owner/name)."""
+        """Comment on an issue or pull request (repo = owner/name; number from github_search_issues or github_notifications)."""
         d = await self._api("POST", f"/repos/{repo}/issues/{number}/comments", json={"body": body})
         return {"url": d["html_url"]}

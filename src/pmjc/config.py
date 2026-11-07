@@ -102,6 +102,7 @@ class Settings(BaseModel):
     scheduled_jobs_enabled: bool = False  # cron/interval/event jobs; manual runs always work
     approval_ttl_seconds: int = 600
     audit_retention_days: int = 30
+    thread_retention_days: int = 90  # closed threads older than this are deleted
     notify_channels: list[str] = Field(default_factory=list)  # connector ids used for approvals/alerts, in order
 
 

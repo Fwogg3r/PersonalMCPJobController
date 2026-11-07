@@ -16,10 +16,10 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_ts ON events(ts);
 CREATE TABLE IF NOT EXISTS runs (
   id INTEGER PRIMARY KEY, job TEXT, trigger TEXT, status TEXT, provider TEXT, started REAL, finished REAL,
-  output TEXT, error TEXT, cost_usd REAL DEFAULT 0);
+  output TEXT, error TEXT, cost_usd REAL DEFAULT 0, thread_id TEXT);
 CREATE TABLE IF NOT EXISTS approvals (
   id TEXT PRIMARY KEY, tool TEXT, args TEXT, payload_hash TEXT, requested_by TEXT, reason TEXT,
-  status TEXT, created REAL, expires REAL, decided REAL, result TEXT);
+  status TEXT, created REAL, expires REAL, decided REAL, result TEXT, thread_id TEXT);
 CREATE TABLE IF NOT EXISTS tokens (
   id TEXT PRIMARY KEY, name TEXT, hash TEXT UNIQUE, scopes TEXT, created REAL, last_used REAL, revoked INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS audit (
@@ -42,6 +42,9 @@ def conn() -> sqlite3.Connection:
         c.execute("PRAGMA busy_timeout=30000")
         c.execute("PRAGMA synchronous=FULL")
         c.executescript(SCHEMA)
+        for t in ("runs", "approvals"):  # databases created before threads existed
+            if "thread_id" not in {r[1] for r in c.execute(f"PRAGMA table_info({t})")}:
+                c.execute(f"ALTER TABLE {t} ADD COLUMN thread_id TEXT")
         _local.c = c
     return c
 

@@ -43,6 +43,16 @@ class ToolSpec:
         return {"act": "actions", "jobs": "jobs"}.get(self.scope, "sources")
 
 
+def with_limits(doc: str, c: Connector) -> str:
+    """Tool description plus the connector's limits, so a blank session sees them in the tool list."""
+    extra = ""
+    if c.limitations:
+        extra += "\nLimits: " + c.limitations.strip()
+    if c.native_alternatives:
+        extra += "\nBetter if your client can: " + c.native_alternatives.strip()
+    return doc + extra
+
+
 def _classes_in(module) -> list[type[Connector]]:
     return [c for _, c in inspect.getmembers(module, inspect.isclass)
             if issubclass(c, Connector) and c.__module__ == module.__name__ and getattr(c, "id", "")]
@@ -110,7 +120,7 @@ class Registry:
                     log.warning("duplicate tool name %s in %s; skipped", meta["name"], c.id)
                     continue
                 seen.add(meta["name"])
-                out.append(ToolSpec(meta["name"], c.id, meta["scope"], fn, inspect.getdoc(fn) or "",
+                out.append(ToolSpec(meta["name"], c.id, meta["scope"], fn, with_limits(inspect.getdoc(fn) or "", c),
                                     meta["untrusted_output"], meta.get("egress", False)))
         return out
 

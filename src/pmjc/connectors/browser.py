@@ -35,6 +35,8 @@ def rightmost_monitor_origin() -> tuple[int, int]:
 
 class Browser(Connector):
     id = "browser"
+    limitations = "Read-only: can't click, type, submit or download. Only domains allowed in settings; needs a saved login (pmjc browser login <url>). Sends the URL off the machine."
+    native_alternatives = 'browser or computer control in your client, to interact with pages.'
     name = "Browser (signed-in profile)"
     description = "Reads pages from sites you've signed in to in pmjc's own browser profile. Run `pmjc browser login <url>` once per site."
     credentials = []
@@ -84,7 +86,7 @@ class Browser(Connector):
 
     @tool(scope="read", untrusted_output=True, egress=True)
     async def browser_read(self, url: str, wait_seconds: float = 3.0, max_chars: int = 15000) -> dict:
-        """Open a page (on an allowed domain) in the signed-in browser and return its visible text."""
+        """Open a page in pmjc's signed-in browser and return its visible text. url must be on a domain the user allowed (the error lists them). Read-only: it can't click or type."""
         self._check(url)
         async with self._lock:
             ctx = await self._context()

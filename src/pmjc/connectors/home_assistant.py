@@ -7,6 +7,8 @@ from ..connector import Connector, Field, Health, tool
 
 class HomeAssistant(Connector):
     id = "home_assistant"
+    limitations = 'Only what Home Assistant exposes; protected entities (locks, alarms, ...) are refused. Location is the last fix from the phone app.'
+    native_alternatives = 'a Home Assistant connector in your client.'
     name = "Home Assistant"
     description = "States, services, your phone's location and push notifications (with approve buttons) through Home Assistant."
     docs_url = "https://developers.home-assistant.io/docs/api/rest/"
@@ -62,7 +64,7 @@ class HomeAssistant(Connector):
 
     @tool(scope="act")
     async def ha_call_service(self, domain: str, service: str, entity_id: str | None = None, data: dict | None = None) -> dict:
-        """Call a Home Assistant service, e.g. domain=light service=turn_on entity_id=light.kitchen."""
+        """Call a Home Assistant service, e.g. domain=light service=turn_on entity_id=light.kitchen. Find entity ids with ha_states first."""
         import re
         blocked = set(self.option("blocked_entities", []))
         patterns = self.option("blocked_patterns", [])

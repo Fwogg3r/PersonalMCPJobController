@@ -27,7 +27,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Any
 
-from . import agent, config, db, executor, registry, router
+from . import agent, config, db, executor, memory, registry, router
 from .auth import Caller
 from .connector import Event
 
@@ -138,6 +138,16 @@ class WatchManager:
         if not caller.can("jobs"):
             raise PermissionError("starting a watch needs the 'jobs' scope")
         spec = validate(dict(spec))
+        tid = spec.get("thread_id") or caller.thread_id
+        if tid and not memory.thread_exists(tid):
+            raise ValueError(f"no thread {tid}; omit thread_id to create one")
+        if not tid:
+            tid = memory.thread_new(request, by=caller.name, private=bool(spec.get("private")), trust=memory.trust_of(caller))
+        elif spec.get("private"):
+            memory.thread_make_private(tid)
+        spec["thread_id"] = tid
+        memory.thread_add(tid, "watch_started", f"Watching ({spec['type']}): {request[:500]}", author=caller.name,
+                          trust=memory.trust_of(caller), status="waiting")
         wid = "w_" + secrets.token_hex(5)
         expires = _now() + min(max(60, int(expires_in_seconds)), MAX_SECONDS)
         if spec["type"] == "time":
@@ -193,6 +203,7 @@ class WatchManager:
             return
         msg = f"Nothing happened before the watch expired. Request: {w['request']}"
         self._end(wid, "expired", msg)
+        self._to_thread(w, "watch_expired", msg, "agent")
         await self._deliver(w, msg)
 
     # --- triggers ------------------------------------------------------------------------------------------
@@ -250,16 +261,24 @@ class WatchManager:
                 return
             w["status"] = "running"  # one firing only
             db.x("UPDATE watches SET status='running' WHERE id=?", wid)
-        sp = w["spec"]
-        result = await self._respond(w, kind, context, untrusted)
+        result, tainted = await self._respond(w, kind, context, untrusted)
         self._end(wid, "done", result, f"{kind}: {context[:500]}")
+        self._to_thread(w, "watch_result", result, "untrusted" if tainted else "agent")
         await self._deliver(w, result)
 
-    async def _respond(self, w: dict, kind: str, context: str, untrusted: bool) -> str:
+    def _to_thread(self, w: dict, kind: str, text: str, trust: str) -> None:
+        tid = w["spec"].get("thread_id")
+        if tid and memory.thread_exists(tid):
+            memory.thread_add(tid, kind, text, author=f"watch:{w['id']}", trust=trust, status="updated", unread=True)
+
+    async def _respond(self, w: dict, kind: str, context: str, untrusted: bool) -> tuple[str, bool]:
+        """Returns the answer and whether it was derived from third-party content."""
         sp = w["spec"]
         if sp.get("respond") == "raw":
-            return f"{sp.get('prompt') or w['request']}\n\nTriggered by {kind}:\n{context[:3000]}"
+            return (f"{sp.get('prompt') or w['request']}\n\nTriggered by {kind}:\n{context[:3000]}",
+                    untrusted or kind in ("event", "poll"))
         caller = self._caller(w)
+        caller.thread_id = sp.get("thread_id")
         caller.untrusted = untrusted or kind in ("event", "poll")
         tool_names = sp.get("tools")
         tools = [t for t in registry.get().tools() if caller.can(t.mcp_scope) and t.scope != "jobs"
@@ -271,16 +290,19 @@ class WatchManager:
                   f"```\n{context[:12000]}\n```")
         need = router.Need(capabilities={"tools"} if tools else set(), private=bool(sp.get("private")))
         try:
-            res = await agent.run(prompt, caller, tools, need, max_turns=int(sp.get("max_turns", 6)))
-            return res.text
+            res = await agent.run(prompt, caller, tools, need, system=agent.SYSTEM + memory.system_block(),
+                                  max_turns=int(sp.get("max_turns", 6)))
+            return res.text, caller.untrusted
         except Exception as e:
             log.warning("watch %s: no model could answer (%s); sending raw context", w["id"], type(e).__name__)
-            return f"{w['request']}\n\nWatch fired ({kind}); no model was available to summarize, so here is the raw data:\n{context[:3000]}"
+            return f"{w['request']}\n\nWatch fired ({kind}); no model was available to summarize, so here is the raw data:\n{context[:3000]}", True
 
     async def _deliver(self, w: dict, text: str) -> None:
         if w["spec"].get("deliver", "notify") == "none":
             return
         reg = registry.get()
+        if w["spec"].get("thread_id"):
+            text = f"{text[:3400]}\n\nResume: thread {w['spec']['thread_id']}"
         ids = w["spec"].get("notify") or config.load().notify_channels
         chans = [reg.connectors[i] for i in ids if i in reg.connectors and reg.connectors[i].is_channel] or reg.channels()[:1]
         for ch in chans:

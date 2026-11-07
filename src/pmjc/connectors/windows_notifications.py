@@ -94,6 +94,7 @@ def read_database() -> list[dict]:
 
 class WindowsNotifications(Connector):
     id = "windows_notifications"
+    limitations = 'Only notifications the pmjc PC shows (Windows only): sender name and preview, not full messages; nothing if the app runs only on another device or is silenced.'
     name = "Windows notifications"
     description = ("Notifications from desktop apps and browsers on this PC (Discord, Messenger in Chrome, Outlook, ...). "
                    "Sign in to each service on this PC and allow its notifications.")

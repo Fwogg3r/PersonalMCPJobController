@@ -27,6 +27,8 @@ def _run(argv: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
 
 class Files(Connector):
     id = "files"
+    limitations = "Read-only, only inside folders from files_roots; secret-looking files are never readable. Can't write or delete."
+    native_alternatives = "your client's file tools if it runs on that machine."
     name = "Files (read-only)"
     description = "List, search and read files inside folders you allow (option `roots`). Secret-looking files are never read."
 
@@ -57,12 +59,12 @@ class Files(Connector):
 
     @tool(scope="read")
     async def files_roots(self) -> list[str]:
-        """Folders pmjc may read."""
+        """Folders pmjc may read. Start here: files_list/files_read/files_search paths must be inside one of these."""
         return [str(r) for r in self._roots()]
 
     @tool(scope="read")
     async def files_list(self, path: str, pattern: str = "*", limit: int = 200) -> list[dict]:
-        """Entries in a folder (name, type, size, modified), optionally filtered by a glob pattern."""
+        """Entries in a folder (name, type, size, modified), optionally filtered by a glob pattern. path must be inside a folder from files_roots."""
         p = self._check(path)
         out = []
         for e in sorted(p.iterdir(), key=lambda x: x.name.lower()):
@@ -80,7 +82,7 @@ class Files(Connector):
 
     @tool(scope="read", untrusted_output=True)
     async def files_read(self, path: str, max_chars: int = 20000, offset: int = 0) -> dict:
-        """Text of a file (UTF-8, replacing undecodable bytes)."""
+        """Text of a file (UTF-8). path must be inside a folder from files_roots; get paths from files_list or files_search."""
         p = self._check(path)
         if p.is_dir():
             raise IsADirectoryError(str(p))
@@ -127,6 +129,7 @@ class Files(Connector):
 
 class PcStatus(Connector):
     id = "pc"
+    limitations = 'Only the machine pmjc runs on. Read-only.'
     name = "This PC"
     description = "CPU, memory, disks, GPU, uptime and the busiest processes on the PC running pmjc."
 
@@ -197,6 +200,8 @@ class Ssh(Connector):
     Login is always non-interactive (BatchMode): keys or an agent, never passwords.
     """
     id = "ssh"
+    limitations = 'Only machines configured in pmjc (ssh_machines); every command needs approval. No interactive sessions.'
+    native_alternatives = "your client's shell if it runs on that machine."
     name = "Remote machines (SSH)"
     description = ("Check and run commands on other machines over SSH: any host you configure (address, user, port, key, "
                    "jump host or proxy command) or Host aliases from ~/.ssh/config. Running commands needs approval.")
@@ -256,19 +261,20 @@ class Ssh(Connector):
 
     @tool(scope="read")
     async def ssh_check(self, machine: str) -> dict:
-        """Is the machine reachable? Returns its hostname and uptime (runs no other command)."""
+        """Is the machine reachable? Returns its hostname and uptime (runs no other command). machine is a name from ssh_machines."""
         cmd = ("hostname && (uptime 2>/dev/null || powershell -NoProfile -Command "
                "\"[math]::Round(((Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime).TotalHours, 1)\")")
         return await self._ssh(machine, cmd, 40)
 
     @tool(scope="act")
     async def ssh_run(self, machine: str, command: str, timeout_seconds: int = 120) -> dict:
-        """Run a shell command on a machine over SSH. Needs approval."""
+        """Run a shell command on a machine over SSH. Needs approval. machine is a name from ssh_machines."""
         return await self._ssh(machine, command, min(max(timeout_seconds, 5), 1800))
 
 
 class LmStudio(Connector):
     id = "lmstudio"
+    limitations = 'Local models only; ask uses already-loaded models, loading needs approval and uses GPU memory. Unload when done.'
     name = "LM Studio hosts"
     description = "Your local models: what's downloaded and loaded on each host, and asking one directly."
 

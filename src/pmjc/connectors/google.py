@@ -17,6 +17,8 @@ from ..oauth2 import OAuth2Mixin
 
 class Google(OAuth2Mixin, Connector):
     id = "google"
+    limitations = "Gmail and Google Calendar only. Never sends email (drafts only); can't delete mail or events."
+    native_alternatives = 'a mail/calendar connector in your client that can send or edit.'
     name = "Google (Gmail + Calendar)"
     description = "Search and read Gmail, draft emails, read and add Calendar events."
     docs_url = "https://console.cloud.google.com/apis/credentials"
@@ -65,7 +67,7 @@ class Google(OAuth2Mixin, Connector):
 
     @tool(scope="read", untrusted_output=True)
     async def gmail_read(self, message_id: str, max_chars: int = 10000) -> dict:
-        """Full text of one email."""
+        """Full text of one email. message_id comes from gmail_search."""
         d = await self._get(f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}", format="full")
 
         def walk(p):
@@ -79,7 +81,7 @@ class Google(OAuth2Mixin, Connector):
 
     @tool(scope="act")
     async def gmail_draft(self, to: str, subject: str, body: str) -> dict:
-        """Create a Gmail draft (not sent; you send it yourself)."""
+        """Create a Gmail draft. It is NOT sent: the user sends it from Gmail (follow with pmjc_handoff if they should act now)."""
         msg = EmailMessage()
         msg["To"], msg["Subject"] = to, subject
         msg.set_content(body)
