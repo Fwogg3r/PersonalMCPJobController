@@ -1,0 +1,18 @@
+name: marketplace-replies
+description: Tell me when a Facebook Marketplace seller replies (Messenger notifications on this PC).
+enabled: true
+trigger:
+  event: {source: windows_notifications}
+match:
+  app: ["Messenger", "Google Chrome", "Facebook"]
+  regex: "(?i)marketplace|available|still|price|pick ?up|deal"
+prompt: |
+  A notification arrived on my PC (below). If it is someone replying to me about a Marketplace item,
+  answer in one line: who replied, which item if known, and what they said.
+  If it is anything else, answer exactly NOTHING.
+scopes: [sources]
+tools: [notifications_current]
+model: {private: true}          # message text stays on local models
+notify_when: not_empty
+cooldown_seconds: 30
+max_turns: 4

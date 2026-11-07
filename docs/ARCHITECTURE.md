@@ -1,0 +1,145 @@
+# Architecture
+
+PersonalMCPJobController (`pmjc`) is a self-hosted **switchboard**. It connects agents and automation tools to the services a person uses, and runs scheduled or event-driven jobs over them. It runs as an always-on service on one PC, and anyone can clone it and run it on their own machine.
+
+```
+                 ┌──────────────────────── interfaces ────────────────────────┐
+ Claude / Cursor │ MCP stdio · MCP HTTP (/mcp, token or OAuth)                │
+ n8n / HA / Zap  │ REST + OpenAPI (/api, /docs) · webhooks in (/hooks) · CLI  │
+ any LLM agent   │ OpenAI/Anthropic tool-schema export (/api/tools/export/..) │
+ you             │ dashboard (/) : connectors, credentials, routing, jobs     │
+                 └───────────────┬─────────────────────────────┬─────────────┘
+                                 │ executor: scopes · taint · approvals · audit
+      ┌──────────────┐   ┌───────▼────────┐   ┌──────────────┐   ┌────────────┐
+      │ credential   │◄──┤ connector      │──►│ event bus    │──►│ job engine │
+      │ store        │   │ registry       │   │ (SQLite)     │   │ (APSched.) │
+      └──────────────┘   └───────┬────────┘   └──────────────┘   └─────┬──────┘
+                                 │ tools / event sources / notify      │
+   windows_notifications · browser · home_assistant · discord · telegram │
+   slack · google · github · weather · places · ntfy · webhook · YAML APIs│
+                                                       ┌─────────────────▼──────┐
+                                                       │ model router + agent   │
+                                                       │ local hosts → claude -p│
+                                                       │ (plan) → paid APIs     │
+                                                       └────────────────────────┘
+```
+
+Code map (`src/pmjc/`):
+
+| File | What it holds |
+|---|---|
+| `connector.py` | The connector contract |
+| `registry.py` | Discovery |
+| `http_connector.py` | YAML connectors |
+| `executor.py` | The one path for every tool call |
+| `auth.py` | Tokens, callers, signatures |
+| `creds.py` | Credential store |
+| `router.py`, `agent.py` | Model routing and the tool loop |
+| `jobs.py` | Jobs, events, scheduler |
+| `mcp_server.py`, `server.py` | Interfaces |
+| `service.py` | Always-on service |
+| `cli.py` | CLI |
+| `connectors/` | Built-in connectors |
+
+## Principles
+1. **PC-native first.** Sensors run on the host PC: Windows notifications from desktop apps and Chrome, plus a signed-in browser profile. No extra hardware.
+2. **One connector = one small file.** A connector declares its credentials, its tools and optional event sources. A service with a plain HTTP API can be YAML only. Third-party packages can add connectors through the `pmjc.connectors` entry point, but only when the user enables them.
+3. **Nothing personal in the repo.** Credentials, jobs, settings, browser profiles and the database live in `PMJC_HOME`:
+   - Windows: `%USERPROFILE%\.pmjc` by default. Not AppData: MSIX-packaged apps, such as the Claude desktop app, redirect the AppData writes of processes they start into a private copy that the service would never see.
+   - Elsewhere: `~/.local/share/pmjc`.
+4. **Least privilege, fail closed.** There are four scopes:
+   - `sources`: read;
+   - `actions`: side effects, which need approval;
+   - `jobs`;
+   - `admin`.
+
+   Tools count as side-effecting unless they say otherwise.
+5. **Every interface is generated from the same registry, and every call goes through `executor.call_tool`.** Picking an interface can't bypass the rules.
+
+## Connector contract
+See [CONNECTORS.md](CONNECTORS.md).
+- **Tags.** `@tool(scope="read"|"act"|"jobs", untrusted_output=..., egress=...)`. The default is `act`. YAML tools default to act, untrusted output and egress.
+- **Tool names** are `<connector>_<verb>`: letters, digits and underscores, at most 64 characters, checked when the connector loads.
+- **Credential fields:** secrets go to the credential store; `secret=False` fields go to `settings.yaml`. There are `oauth2` (`OAuth2Mixin`: authorization code + PKCE, refresh under a lock) and browser-login flows.
+- **Event sources** return `Event`s. The bus dedupes them by `key`. Connectors keep cursors with `state_get` and `state_set`.
+
+## Credential store
+- **Envelope encryption.** Secrets are encrypted with one random data key (Fernet) and stored in the pmjc database, so there are no keyring size limits and no per-item OS prompts.
+- **Where the data key lives:** the OS keyring (Windows Credential Manager, macOS Keychain or Secret Service), or derived from `PMJC_MASTER_KEY` (`file` backend, for headless Linux; inject it with systemd-creds).
+- **Env overrides:** `PMJC_<CONNECTOR>_<FIELD>` always wins and is read-only.
+- **Redaction:** a logging filter removes every loaded secret from logs and exception text, and httpx request logging is off because URLs can carry keys. YAML connector credentials are only sent to their `base_url`, and path parameters are URL-encoded.
+- **Threat model:** this protects secrets at rest and keeps them out of the repo. Any process running as the same OS user can still read them, as with any keyring or browser profile.
+
+## Model router
+- An ordered, configurable list of providers (dashboard → Routing). The default order:
+  1. **Local OpenAI-compatible hosts** (LM Studio, Ollama, ...). Health means the wanted model is listed. If the host is down, pmjc runs its `start` command (e.g. `lms server start`, or `ssh gpu-box lms server start`); if the model isn't loaded, `lms load`. `skip_when_gpu_busy_percent` skips local hosts while the GPU is busy.
+  2. **`claude -p`** on the user's plan (locked down; see below).
+  3. **Paid APIs** (Anthropic, OpenAI, OpenRouter, any OpenAI-compatible URL), each with a monthly budget cap enforced from reported usage. Also set provider-side limits, since the price table can go stale.
+- **Skipping.** A provider is skipped when it's disabled, unhealthy, over budget, cooling down after a failure (5 minutes), or lacks a needed capability (`tools`, `vision`, `context_tokens`). Jobs can override the order.
+- **Privacy.** `trust: local|cloud` on each provider. A job with `private: true` uses local providers only and fails rather than fall back to the cloud.
+- **Pinned per run.** If the provider fails, or returns invalid JSON when JSON was expected, before any act tool has run, the run restarts on the next provider. After an act tool has run, the run is marked failed, so side effects never repeat.
+- **Start and load commands** run as argv with no shell and a timeout, and can only be changed in `settings.yaml`, never through the API.
+- **`claude -p` lockdown:**
+  - its own `CLAUDE_CONFIG_DIR`, and `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`;
+  - an empty temp cwd, so no CLAUDE.md is picked up;
+  - `--tools ""` (no built-in tools);
+  - `--strict-mcp-config` with only pmjc, reached with an in-memory run token bound to the job's caller;
+  - `--allowedTools mcp__pmjc`;
+  - `ANTHROPIC_*` and Bedrock/Vertex variables removed from its environment.
+
+## Jobs
+- **Files.** A job is a YAML file in `PMJC_HOME/jobs/` (examples in `examples/jobs/`). The schedule is rebuilt from the files at start and whenever they change (APScheduler 3, coalesce, misfire grace period).
+- **Triggers:** `cron`, `interval`, an `event` filter, a webhook (`/hooks/<name>` creates an event), or `manual`.
+- **Tiers:** plain-code `match` filters (app, contains, regex, data) and dedupe first; the agent loop only if they pass.
+- **Taint is derived, not declared.** A run is tainted once its trigger event is untrusted or it calls an `untrusted_output` tool. A tainted run can't call `egress` tools, and every act tool goes to approval, even ones on the auto-approve list.
+- **No escalation.** A job can't give itself more than its creator has: scopes are limited to `sources` and `actions`, and `auto_approve` is honoured only in jobs the owner wrote (CLI, dashboard, the file). Jobs can't create jobs.
+- **Output** goes to the job's notify channels. `NOTHING` or empty means no notification.
+
+## Requests and watches
+- **Request flow:** check connections, answer instantly when possible, otherwise start one **watch**. `/api/ask` and `pmjc ask` run this flow on the routed model; MCP clients run it with their own model. Both are guided by the tool descriptions and the server instructions.
+- **A watch** is a temporary monitor for one request (`watches.py`, table `watches`). Types:
+  - `time`: date trigger.
+  - `event`: matches events from one source with the same filter as jobs.
+  - `poll`: calls a *read* tool every N seconds (minimum 30) and fires on contains/regex/changed. An optional yes/no check goes to a local model (`private`).
+- **Firing:** a watch fires once. The request is answered by the routed model with the gathered context, tainted for event and poll triggers, or sent raw if no model is available. The answer is delivered to the notify channels and stored. Then the watch ends, and `apply_settings` turns off sources nobody needs.
+- **Polling is on while needed:** a source polls when global monitoring includes it **or** an active watch needs it. Events seen only for a watch are routed but not stored.
+- **Limits and persistence:** watches expire (default 24 h, max 7 days) and need the `jobs` scope. They're stored in SQLite: the service adopts watches created by other processes (stdio MCP, CLI) every 5 s, and restores them after a restart.
+
+## Approvals
+- **When.** An `act` tool called through **any** agent interface (stdio MCP included) creates a pending approval, unless it's on the owner's `auto_approve` list and the run is clean. Only a person at the CLI or dashboard runs act tools directly.
+- **What's stored:** the exact arguments plus a payload hash. It's single use and expires after about 10 minutes. On approval the stored payload runs; it is never regenerated.
+- **Announced** on the first working notify channel (HA actionable notification, Telegram button, ntfy action, Discord or Slack link, webhook) with signed links.
+- **How to approve:** only through the dashboard (admin) or an HMAC-signed link. The link's GET only shows the arguments; approving takes a POST, so link previews can't approve. **No tool can approve.**
+
+## Interfaces and auth
+- **MCP stdio:** `pmjc mcp`, for local clients. All scopes, but act tools still need approval.
+- **MCP HTTP** at `/mcp` and the **REST API** at `/api/*`:
+  - bearer tokens (`pmjc token create`, stored as SHA-256 hashes);
+  - optional OAuth 2.1 (FastMCP Google or GitHub provider through `MultiAuth`). It refuses to start without `oauth.allowed` (identity → scopes).
+- **Taint tracking** for HTTP MCP clients is per `Mcp-Session-Id`. REST calls are stateless, so taint is per request.
+- **Network.** The server binds to `127.0.0.1` by default. Remote access goes through a tunnel the user runs. Nothing is trusted because of the source IP, since a tunnel makes every request come from localhost.
+- **Request checks.** A Host allowlist and an Origin check run on every request, against DNS rebinding and cross-site requests.
+- **Dashboard** at `/`: a bearer token held in sessionStorage (no cookies, so no CSRF) and a strict CSP. The kill switch revokes every token and pauses the scheduler.
+
+## Service
+`pmjc service install` registers the server to start at logon or boot and to restart if it crashes:
+- **Windows:** a per-user scheduled task at logon. It must be the interactive session to read notifications and drive the browser.
+  - Task settings: `pythonw.exe` (no console window), `ExecutionTimeLimit=PT0S`, battery stop/start off, `RestartOnFailure` every minute, `IgnoreNew`.
+  - The supervisor holds a single-instance lock, keeps the PC awake, and restarts the server child with backoff.
+  - After a reboot it starts when the user signs in. Enable Windows auto sign-in if the PC must recover with nobody there; that's a security trade-off.
+- **Linux:** a systemd user unit; `loginctl enable-linger` keeps it running after logout.
+- **macOS:** a launchd agent.
+
+## Windows notifications
+- **Listener.** `UserNotificationListener` (WinRT, pywinrt packages) works from plain unpackaged Python on Windows 11. This was verified on 2026-11-07, with access status Allowed. pmjc polls `GetNotificationsAsync` every 3 s and diffs by notification ID; it doesn't use the change event, which unpackaged callers don't get. It doesn't replay the notification center at startup.
+- **Fallback.** A WAL-aware, read-only copy of `wpndatabase.db`. It fails loudly if the schema changes.
+- **OTP redaction.** Codes in sign-in and verification notifications become `[code]` by default.
+- **Silencing.** `pmjc notifications silence <AUMID>` sets `Enabled=1`, `ShowInActionCenter=1` and `ShowBanner=0` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\<AUMID>`, creating the key if it's missing. The value names for sound and lock screen aren't certain, so `pmjc notifications learn <AUMID>` records the exact values from a manual toggle.
+- **Chrome** shows every site under one app ID. Install a site as an app, or give it a separate profile, to silence it alone.
+
+## Deferred (see the roadmap)
+- Multiple accounts per connector (`gmail:personal`, `gmail:work`).
+- Mounting existing MCP servers as connectors (FastMCP proxy, mapping `readOnlyHint`/`destructiveHint` to read/act) and importing OpenAPI specs.
+- Running the browser in a separate process so a hung Chromium can't stall the server.
+- Images in tool results for vision models (Discord attachments are currently URLs).
+- A Telegram callback webhook (buttons currently open the signed approval page).

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "pmjc": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/PersonalMCPJobController", "pmjc", "mcp"]
+    },
+    "pmjc-http": {
+      "type": "http",
+      "url": "http://127.0.0.1:8770/mcp",
+      "headers": {"Authorization": "Bearer ${PMJC_TOKEN}"}
+    }
+  }
+}

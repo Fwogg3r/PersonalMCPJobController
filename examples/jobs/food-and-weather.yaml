@@ -1,0 +1,12 @@
+name: food-and-weather
+description: Each evening, the weather where I am plus a few nearby food options.
+enabled: true
+trigger: {cron: "30 17 * * *"}
+prompt: |
+  Get my location with ha_location. Then get tonight's and tomorrow's weather there with weather_forecast,
+  and 5 nearby restaurants with places_nearby (radius 3000 m), preferring ones whose opening hours include tonight.
+  Reply in at most 6 short lines: weather first, then the restaurants with cuisine.
+scopes: [sources]
+tools: [ha_location, weather_forecast, places_nearby]
+notify_when: always
+max_turns: 6

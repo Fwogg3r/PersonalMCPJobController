@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>pmjc dashboard</title>
+<style>
+:root{--bg:#f7f7f8;--panel:#fff;--text:#1b1c1f;--muted:#666a73;--line:#dfe1e6;--accent:#2f6fde;--ok:#1d8a4a;--bad:#c23b32;--warn:#a86b00}
+@media (prefers-color-scheme:dark){:root{--bg:#121316;--panel:#1b1d22;--text:#e7e8ea;--muted:#9a9ea8;--line:#2c2f36;--accent:#6b9cff;--ok:#4cc27e;--bad:#ff6b61;--warn:#e0a63a}}
+*{box-sizing:border-box}body{margin:0;font:14px/1.45 system-ui,Segoe UI,sans-serif;background:var(--bg);color:var(--text)}
+header{display:flex;gap:12px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+header b{font-size:16px}nav{display:flex;gap:4px;flex-wrap:wrap}
+nav button{background:none;border:0;color:var(--muted);padding:6px 10px;border-radius:6px;cursor:pointer;font:inherit}
+nav button.on{background:var(--bg);color:var(--text);font-weight:600}
+main{max-width:1100px;margin:0 auto;padding:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.grow{flex:1}
+.muted{color:var(--muted)}.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}
+input,select,textarea{font:inherit;color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 8px;max-width:100%}
+textarea{width:100%;min-height:90px}
+button.b{font:inherit;border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:6px;padding:6px 12px;cursor:pointer}
+button.p{background:var(--accent);border-color:var(--accent);color:#fff}button.d{color:var(--bad)}
+table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:6px;border-bottom:1px solid var(--line);vertical-align:top}
+code,pre{font-family:ui-monospace,Consolas,monospace;font-size:12px}pre{white-space:pre-wrap;word-break:break-word;margin:0}
+.pill{font-size:12px;padding:1px 8px;border-radius:99px;border:1px solid var(--line)}
+.tools{font-size:12px;color:var(--muted)}label{display:block;margin:6px 0 2px}
+#login{max-width:520px;margin:10vh auto}
+@media (max-width:600px){td,th{padding:4px}main{padding:10px}}
+</style>
+</head>
+<body>
+<div id="login" class="card" hidden>
+  <h2>pmjc</h2>
+  <p class="muted">Paste an admin token (from <code>pmjc setup</code> or <code>pmjc token create me --admin</code>). It stays in this browser tab only.</p>
+  <div class="row"><input id="tok" class="grow" type="password" placeholder="pmjc_..."><button class="b p" id="go">Open</button></div>
+</div>
+<div id="app" hidden>
+<header><b>pmjc</b><nav id="nav"></nav><span class="grow"></span><span id="hl" class="muted"></span>
+  <button class="b" id="out">Sign out</button></header>
+<main id="main"></main>
+</div>
+<script>
+const $=s=>document.querySelector(s), esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let TOKEN=sessionStorage.getItem("pmjc")||"";
+async function api(path,opt={}){const r=await fetch(path,{...opt,headers:{"Authorization":"Bearer "+TOKEN,"Content-Type":"application/json",...(opt.headers||{})}});
+  if(r.status===401){sessionStorage.removeItem("pmjc");location.reload()} const t=await r.text(); let j; try{j=JSON.parse(t)}catch{j=t}
+  if(!r.ok) throw new Error(j.detail||j.error||t); return j}
+const when=ts=>ts?new Date(ts*1000).toLocaleString():"";
+const TABS={Ask:askTab,Settings:settingsTab,Connectors:connectors,Routing:routing,Jobs:jobsTab,Approvals:approvals,Activity:activity,Tokens:tokens,Connect:connect};
+let tab=localStorage.getItem("pmjc-tab")||"Ask";
+function nav(){ $("#nav").innerHTML=Object.keys(TABS).map(t=>`<button class="${t===tab?"on":""}" data-t="${t}">${t}</button>`).join("");
+  $("#nav").querySelectorAll("button").forEach(b=>b.onclick=()=>{tab=b.dataset.t;try{localStorage.setItem("pmjc-tab",tab)}catch{};nav();render()})}
+async function render(){ $("#main").innerHTML='<p class="muted">Loading…</p>'; try{await TABS[tab]()}catch(e){$("#main").innerHTML=`<div class="card bad">${esc(e.message)}</div>`}}
+
+async function askTab(){ const [ws,as]=await Promise.all([api("/api/watches?all=true"),api("/api/asks")]);
+  const autoForm=(id,text)=>`<div class="row" style="margin-top:6px"><span>Run automatically:</span>
+     <select data-af-kind="${id}"><option value="every">every</option><option value="daily">daily at</option></select>
+     <input data-af-val="${id}" value="60" size="6" title="minutes, or HH:MM for daily">
+     <label class="row"><input type="checkbox" data-af-new="${id}" checked> only tell me when there's something new</label>
+     <button class="b p" data-af="${id}" data-text="${esc(text)}">Automate</button></div>`;
+  $("#main").innerHTML=`<div class="card"><b>Ask</b><p class="muted">Answered now from your connected services, or pmjc starts a temporary watch and sends the answer to your notification channel when it's ready.</p>
+   <textarea id="q" placeholder="e.g. Tell me when the Marketplace seller replies, or: what's the weather near me tonight?"></textarea>
+   <div class="row"><label class="row"><input type="checkbox" id="qp"> local models only</label><span class="grow"></span><button class="b p" id="qa">Ask</button></div>
+   <pre id="qo"></pre>${autoForm("q","")}</div>
+   <div class="card"><b>Requests you repeat</b><p class="muted">Asked more than once. Automate one to have it run on its own instead.</p>
+   ${as.repeated.map((r,i)=>`<div style="margin:8px 0"><b>${esc(r.text)}</b> <span class="muted">${r.times}× · last ${when(r.last)}</span>${autoForm("r"+i,r.text)}</div>`).join("")||'<p class="muted">None yet.</p>'}</div>
+   <div class="card"><b>Watches</b><table>${ws.map(w=>`<tr><td>${when(w.created)}</td><td>${esc(w.request)}</td>
+    <td class="${w.status==="done"?"ok":w.status==="active"||w.status==="running"?"warn":"muted"}">${esc(w.status)}</td>
+    <td><pre>${esc((w.result||"").slice(0,500))}</pre></td><td>${w.status==="active"?`<button class="b d" data-wc="${esc(w.id)}">Cancel</button>`:""}</td></tr>`).join("")||'<tr><td class="muted">None yet.</td></tr>'}</table></div>`;
+  $("#qa").onclick=async()=>{const o=$("#qo");o.textContent="Working…";
+    try{const r=await api("/api/ask",{method:"POST",body:JSON.stringify({text:$("#q").value,private:$("#qp").checked})});
+      o.textContent=r.answer+(r.watches.length?`\n\nWatch started: ${r.watches.join(", ")}`:"")+`\n(${r.provider})`}
+    catch(e){o.textContent=e.message}};
+  document.querySelectorAll("[data-af]").forEach(b=>b.onclick=async()=>{const id=b.dataset.af;
+    const text=id==="q"?$("#q").value:b.dataset.text; if(!text.trim()){alert("Type the request first");return}
+    const kind=document.querySelector(`[data-af-kind="${id}"]`).value, val=document.querySelector(`[data-af-val="${id}"]`).value.trim();
+    const body={text,only_when_new:document.querySelector(`[data-af-new="${id}"]`).checked,private:id==="q"&&$("#qp").checked};
+    if(kind==="daily")body.daily_at=val; else body.every_minutes=parseInt(val,10)||60;
+    try{const r=await api("/api/asks/automate",{method:"POST",body:JSON.stringify(body)});
+      alert(`Job "${r.job}" created (${JSON.stringify(r.trigger)}). Scheduled jobs: ${r.scheduler_on?"on":"off"}. Manage it in the Jobs tab.`)}
+    catch(e){alert(e.message)}});
+  document.querySelectorAll("[data-wc]").forEach(b=>b.onclick=async()=>{await api("/api/watches/"+b.dataset.wc,{method:"DELETE"});render()});
+}
+
+async function settingsTab(){ const [g,aa]=await Promise.all([api("/api/settings/general"),api("/api/auto-approve")]);
+  const sw=(k,label,help)=>`<label class="row" style="margin:10px 0"><input type="checkbox" data-g="${k}" ${g[k]?"checked":""}>
+     <span><b>${label}</b><br><span class="muted">${help}</span></span></label>`;
+  $("#main").innerHTML=`<div class="card"><b>Background activity</b>
+   <p class="muted">With everything off, pmjc reads nothing on its own: it only fetches data when you or an agent call a tool, or you run a job by hand.</p>
+   ${sw("monitoring_enabled","Background monitoring","Let the sources ticked below poll in the background (e.g. read new Windows notifications every few seconds) and store them as events.")}
+   <div style="margin-left:28px">${g.available_sources.map(c=>`<label class="row"><input type="checkbox" data-src="${esc(c.id)}" ${g.monitoring_sources.includes(c.id)?"checked":""}> ${esc(c.name)}${c.configured?"":' <span class="muted">(not connected)</span>'}</label>`).join("")||'<span class="muted">No connector has a background source.</span>'}</div>
+   ${sw("scheduled_jobs_enabled","Scheduled and event-triggered jobs","Run jobs on their cron, interval or event triggers. Off: jobs only run when you press Run or an agent runs them.")}
+   ${sw("auto_start_local","Auto-start local models","When a run needs a local model, start the model server (e.g. LM Studio) and load the model. Off: local hosts are used only if already running with the model loaded.")}
+   <div class="row"><button class="b p" id="gs">Save</button><span id="gst" class="muted"></span></div></div>
+   <div class="card"><b>Run actions without asking</b><p class="muted">Ticked actions run automatically when a request or job uses them. They still ask whenever the run has read messages, web pages or other third-party content.</p>
+   ${aa.act_tools.map(t=>`<label class="row"><input type="checkbox" data-aa="${esc(t.name)}" ${aa.auto_approve.includes(t.name)?"checked":""}> <code>${esc(t.name)}</code> <span class="muted">${esc(t.doc)}</span></label>`).join("")}
+   <div class="row" style="margin-top:8px"><button class="b p" id="aas">Save</button></div></div>
+   <div class="card"><b>Status</b><p>Polling now: ${g.active_polls.length?esc(g.active_polls.join(", ")):'<span class="ok">nothing</span>'}</p>
+   <div class="row"><span>Stored events: ${g.stored_events}</span><button class="b d" id="ce">Delete stored events</button></div></div>`;
+  $("#gs").onclick=async()=>{const b={};document.querySelectorAll("[data-g]").forEach(i=>b[i.dataset.g]=i.checked);
+    b.monitoring_sources=[...document.querySelectorAll("[data-src]:checked")].map(i=>i.dataset.src);
+    await api("/api/settings/general",{method:"PUT",body:JSON.stringify(b)});render()};
+  $("#aas").onclick=async()=>{const t=[...document.querySelectorAll("[data-aa]:checked")].map(i=>i.dataset.aa);
+    await api("/api/auto-approve",{method:"PUT",body:JSON.stringify({tools:t})});render()};
+  $("#ce").onclick=async()=>{if(confirm("Delete all stored events? This can't be undone.")){await api("/api/events",{method:"DELETE"});render()}};
+}
+
+async function connectors(){ const d=await api("/api/connectors");
+  $("#main").innerHTML=(Object.keys(d.errors).length?`<div class="card bad">Failed to load: ${esc(JSON.stringify(d.errors))}</div>`:"")+
+  d.connectors.map(c=>`<div class="card"><div class="row"><b>${esc(c.name)}</b><span class="pill ${c.health.ok?"ok":"muted"}">${c.health.ok?"connected":"not connected"}</span>
+   <span class="muted grow">${esc(c.health.detail)}</span>${c.docs_url?`<a href="${esc(c.docs_url)}" target="_blank" rel="noopener noreferrer">docs</a>`:""}</div>
+   <p class="muted">${esc(c.description)}</p>
+   ${c.credentials.filter(f=>f.kind!=="oauth2").map(f=>`<label>${esc(f.label||f.name)}${f.required?"":" (optional)"} ${c.set.includes(f.name)?'<span class="ok">✓ set</span>':""}</label>
+     <input data-c="${esc(c.id)}" data-f="${esc(f.name)}" type="${f.secret?"password":"text"}" placeholder="${esc(f.help||"")}" style="width:100%">`).join("")}
+   <div class="row" style="margin-top:8px">${c.credentials.some(f=>f.kind!=="oauth2")?`<button class="b p" data-save="${esc(c.id)}">Save</button><button class="b d" data-clear="${esc(c.id)}">Clear</button>`:""}
+   ${c.oauth?`<button class="b" data-oauth="${esc(c.id)}">Connect account</button>`:""}</div>
+   <div class="tools">${c.tools.map(t=>`<span title="${esc(t.doc)}">${esc(t.name)}${t.scope==="act"?" ✎":""}</span>`).join(" · ")}</div></div>`).join("");
+  document.querySelectorAll("[data-save]").forEach(b=>b.onclick=async()=>{const id=b.dataset.save,v={};
+    document.querySelectorAll(`input[data-c="${id}"]`).forEach(i=>{if(i.value)v[i.dataset.f]=i.value});
+    await api(`/api/connectors/${id}/credentials`,{method:"PUT",body:JSON.stringify({values:v})});render()});
+  document.querySelectorAll("[data-clear]").forEach(b=>b.onclick=async()=>{if(confirm("Remove this connector's secrets?")){await api(`/api/connectors/${b.dataset.clear}/credentials`,{method:"DELETE"});render()}});
+  document.querySelectorAll("[data-oauth]").forEach(b=>b.onclick=async()=>{const r=await api(`/api/connectors/${b.dataset.oauth}/oauth`);window.open(r.url,"_blank","noopener")});
+}
+
+async function routing(){ const d=await api("/api/routing"); const st=Object.fromEntries(d.status.map(s=>[s.id,s]));
+  $("#main").innerHTML=`<div class="card"><p class="muted">Jobs use the first provider that is enabled, healthy, within budget and has the needed capabilities.
+   Local hosts are started automatically (their start command is set in settings.yaml). Jobs marked private only use local providers.</p>
+   <table><tr><th></th><th>Provider</th><th>On</th><th>Model</th><th>Budget $/mo</th><th>Status</th></tr>
+   ${d.providers.map((p,i)=>`<tr data-i="${i}"><td><button class="b" data-up="${i}">↑</button></td><td><b>${esc(p.id)}</b><div class="muted">${esc(p.kind)} · ${esc(p.trust)}${p.base_url?" · "+esc(p.base_url):""}</div></td>
+    <td><input type="checkbox" data-k="enabled" ${p.enabled?"checked":""}></td><td><input data-k="model" value="${esc(p.model||"")}" size="18"></td>
+    <td><input data-k="monthly_budget_usd" value="${p.monthly_budget_usd??""}" size="5"></td>
+    <td>${st[p.id]?.healthy?'<span class="ok">ready</span>':'<span class="muted">off/unreachable</span>'}<div class="muted">spent $${st[p.id]?.month_spend_usd??0}</div></td></tr>`).join("")}
+   </table><div class="row" style="margin-top:8px"><button class="b p" id="sv">Save order and settings</button></div></div>
+   <div class="card"><b>Provider keys</b><p class="muted">Stored encrypted. claude.oauth_token comes from <code>claude setup-token</code> (uses your Claude plan).</p>
+   <div class="row"><select id="sk"><option>anthropic.api_key</option><option>openai.api_key</option><option>openrouter.api_key</option><option>claude.oauth_token</option><option>oauth.client_id</option><option>oauth.client_secret</option></select>
+   <input id="sv2" type="password" class="grow"><button class="b" id="ss">Store</button></div></div>`;
+  let provs=d.providers; const collect=()=>document.querySelectorAll("tr[data-i]").forEach(tr=>{const p=provs[tr.dataset.i];
+    tr.querySelectorAll("[data-k]").forEach(i=>{const k=i.dataset.k;p[k]=i.type==="checkbox"?i.checked:(k==="monthly_budget_usd"?(i.value===""?null:+i.value):(i.value||null))})});
+  document.querySelectorAll("[data-up]").forEach(b=>b.onclick=async()=>{collect();const i=+b.dataset.up;if(i>0){[provs[i-1],provs[i]]=[provs[i],provs[i-1]];
+    await api("/api/routing",{method:"PUT",body:JSON.stringify({providers:provs})});render()}});
+  $("#sv").onclick=async()=>{collect();await api("/api/routing",{method:"PUT",body:JSON.stringify({providers:provs})});render()};
+  $("#ss").onclick=async()=>{await api("/api/secrets/"+$("#sk").value,{method:"PUT",body:JSON.stringify({value:$("#sv2").value})});$("#sv2").value="";alert("Stored")};
+}
+
+const EXAMPLE=`name: my-job
+description: What this job does
+enabled: true
+trigger:
+  cron: "*/30 * * * *"      # or interval: 600 | event: {source: windows_notifications} | manual: true
+prompt: |
+  Check X. If nothing needs my attention answer exactly NOTHING.
+scopes: [sources]
+model: {private: false}
+notify_when: not_empty`;
+async function jobsTab(){ const js=await api("/api/jobs");
+  $("#main").innerHTML=js.map(j=>`<div class="card"><div class="row"><b>${esc(j.name)}</b><span class="pill">${j.enabled?"on":"off"}</span><code class="muted grow">${esc(JSON.stringify(j.trigger))}</code>
+    <button class="b" data-tog="${esc(j.name)}" data-on="${j.enabled?1:0}">${j.enabled?"Turn off":"Turn on"}</button><button class="b" data-run="${esc(j.name)}">Run now</button><button class="b" data-edit="${esc(j.name)}">Edit</button><button class="b d" data-del="${esc(j.name)}">Delete</button></div>
+    <p class="muted">${esc(j.description)}</p><pre class="muted" id="out-${esc(j.name)}"></pre></div>`).join("")+
+   `<div class="card"><b>New or edit job (JSON or YAML-like fields)</b><p class="muted">Paste JSON matching the Job schema, or edit the YAML file in the jobs folder. Example:</p>
+    <pre class="muted">${esc(EXAMPLE)}</pre><textarea id="jj" placeholder='{"name":"weather-morning","trigger":{"cron":"0 7 * * *"},"prompt":"..."}'></textarea>
+    <button class="b p" id="js">Save job</button></div>`;
+  document.querySelectorAll("[data-run]").forEach(b=>b.onclick=async()=>{const o=$("#out-"+CSS.escape(b.dataset.run));o.textContent="running…";
+    const r=await api(`/api/jobs/${b.dataset.run}/run`,{method:"POST"});o.textContent=r.output||r.error||JSON.stringify(r)});
+  document.querySelectorAll("[data-tog]").forEach(b=>b.onclick=async()=>{await api(`/api/jobs/${b.dataset.tog}/enabled`,{method:"PUT",body:JSON.stringify({enabled:b.dataset.on!=="1"})});render()});
+  document.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{if(confirm("Delete job?")){await api("/api/jobs/"+b.dataset.del,{method:"DELETE"});render()}});
+  document.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>{const j=js.find(x=>x.name===b.dataset.edit);delete j.file;$("#jj").value=JSON.stringify(j,null,2)});
+  $("#js").onclick=async()=>{await api("/api/jobs",{method:"POST",body:$("#jj").value});render()};
+}
+
+async function approvals(){ const a=await api("/api/approvals?status=pending");
+  $("#main").innerHTML=(a.length?"":'<div class="card muted">Nothing waiting.</div>')+a.map(x=>`<div class="card"><div class="row"><b>${esc(x.tool)}</b>
+   <span class="muted grow">${esc(x.requested_by)} · ${when(x.created)} · expires ${when(x.expires)}</span>
+   <button class="b p" data-a="${esc(x.id)}">Approve</button><button class="b d" data-n="${esc(x.id)}">Deny</button></div>
+   <p>${esc(x.reason)}</p><pre>${esc(JSON.stringify(JSON.parse(x.args),null,2))}</pre></div>`).join("");
+  const dec=async(id,ok)=>{const r=await api("/api/approvals/"+id,{method:"POST",body:JSON.stringify({approve:ok})});alert(r.status);render()};
+  document.querySelectorAll("[data-a]").forEach(b=>b.onclick=()=>dec(b.dataset.a,true));
+  document.querySelectorAll("[data-n]").forEach(b=>b.onclick=()=>dec(b.dataset.n,false));
+}
+
+async function activity(){ const [runs,evs,aud]=await Promise.all([api("/api/runs?limit=30"),api("/api/events?limit=30"),api("/api/audit?limit=40")]);
+  $("#main").innerHTML=`<div class="card"><b>Job runs</b><table>${runs.map(r=>`<tr><td>${when(r.started)}</td><td>${esc(r.job)}</td><td class="${r.status==="ok"?"ok":r.status==="failed"?"bad":"muted"}">${esc(r.status)}</td>
+    <td>${esc(r.provider||"")}</td><td><pre>${esc((r.output||r.error||"").slice(0,600))}</pre></td></tr>`).join("")}</table></div>
+   <div class="card"><b>Events</b><table>${evs.map(e=>`<tr><td>${when(e.ts)}</td><td>${esc(e.source)}</td><td>${esc(e.title)}</td><td class="muted">${esc((e.text||"").slice(0,200))}</td></tr>`).join("")}</table></div>
+   <div class="card"><b>Tool calls (metadata only)</b><table>${aud.map(a=>`<tr><td>${when(a.ts)}</td><td>${esc(a.actor)}</td><td>${esc(a.tool)}</td><td>${esc(a.status)}</td><td class="muted">${esc(a.detail)}</td></tr>`).join("")}</table></div>`;
+}
+
+async function tokens(){ const t=await api("/api/tokens");
+  $("#main").innerHTML=`<div class="card"><b>Create a token</b><div class="row"><input id="tn" placeholder="name (e.g. phone, n8n)">
+   ${["sources","actions","jobs","admin"].map(s=>`<label class="row"><input type="checkbox" value="${s}" ${s==="sources"?"checked":""}> ${s}</label>`).join("")}
+   <button class="b p" id="tc">Create</button></div><pre id="tv" class="ok"></pre></div>
+   <div class="card"><table><tr><th>Name</th><th>Scopes</th><th>Last used</th><th></th></tr>${t.map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.scopes)}</td>
+   <td>${when(x.last_used)}</td><td>${x.revoked?'<span class="muted">revoked</span>':`<button class="b d" data-r="${esc(x.id)}">Revoke</button>`}</td></tr>`).join("")}</table></div>
+   <div class="card"><b class="bad">Kill switch</b><p class="muted">Revokes every token (including yours) and pauses all jobs.</p><button class="b d" id="kill">Revoke everything</button></div>`;
+  $("#tc").onclick=async()=>{const sc=[...document.querySelectorAll("#main input[type=checkbox]:checked")].map(i=>i.value);
+    const r=await api("/api/tokens",{method:"POST",body:JSON.stringify({name:$("#tn").value||"client",scopes:sc})});$("#tv").textContent="Copy now (shown once): "+r.token};
+  document.querySelectorAll("[data-r]").forEach(b=>b.onclick=async()=>{await api("/api/tokens/"+b.dataset.r,{method:"DELETE"});render()});
+  $("#kill").onclick=async()=>{if(confirm("Revoke all tokens and pause jobs?")){await api("/api/kill",{method:"POST"});sessionStorage.removeItem("pmjc");location.reload()}};
+}
+
+async function connect(){ const o=location.origin;
+  $("#main").innerHTML=`<div class="card"><b>Claude Code / Claude Desktop / Cursor (this PC)</b><pre>claude mcp add pmjc -- uv run --directory &lt;repo&gt; pmjc mcp</pre></div>
+  <div class="card"><b>Any MCP client over HTTP</b><pre>URL: ${esc(o)}/mcp
+Header: Authorization: Bearer &lt;token with sources (+jobs)&gt;</pre></div>
+  <div class="card"><b>REST / OpenAPI</b> (n8n, Home Assistant rest_command, iOS Shortcuts, Zapier/Make via your tunnel)
+  <pre>OpenAPI: ${esc(o)}/openapi.json   Docs: ${esc(o)}/docs
+POST ${esc(o)}/api/tools/weather_forecast  {"place":"Boston"}</pre></div>
+  <div class="card"><b>Function-calling frameworks</b> (OpenAI SDK, Anthropic SDK, LangChain, LlamaIndex, ...)
+  <pre>GET ${esc(o)}/api/tools/export/openai   or   /api/tools/export/anthropic
+then execute each call with POST ${esc(o)}/api/tools/{name}</pre></div>
+  <div class="card"><b>Phone and other apps (plain request)</b>
+  <pre>POST ${esc(o)}/api/ask   {"text":"tell me when Ann replies"}   (token with sources + jobs)
+→ {"answer": "...", "watches": ["w_..."]}   result of a watch: GET ${esc(o)}/api/watches/&lt;id&gt;?wait=60</pre>
+  <p class="muted">From a phone this needs your tunnel (public_url + allowed_hosts). iOS Shortcuts: "Get contents of URL" with POST, a JSON body and an Authorization header.</p></div>
+  <div class="card"><b>Webhooks in</b><pre>POST ${esc(o)}/hooks/&lt;name&gt;  {"title":"...","text":"..."}   (token with jobs scope)
+jobs react with trigger: {event: {source: webhook, kind: &lt;name&gt;}}</pre></div>`;
+}
+
+async function start(){ if(!TOKEN){$("#login").hidden=false;return}
+  $("#app").hidden=false; nav(); render();
+  try{const h=await (await fetch("/api/health")).json();$("#hl").textContent=`v${h.version} · ${h.tools} tools · ${h.jobs} jobs`}catch{}}
+$("#go").onclick=()=>{TOKEN=$("#tok").value.trim();sessionStorage.setItem("pmjc",TOKEN);location.reload()};
+$("#tok").onkeydown=e=>{if(e.key==="Enter")$("#go").click()};
+$("#out").onclick=()=>{sessionStorage.removeItem("pmjc");location.reload()};
+start();
+</script>
+</body>
+</html>

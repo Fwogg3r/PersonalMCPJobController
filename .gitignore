@@ -1,0 +1,18 @@
+.agentcontroller/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+# personal data never lives in the repo (it's in PMJC_HOME), but just in case:
+settings.yaml
+*.db
+*.db-wal
+*.db-shm
+credentials.enc
+
+# owner-only material (history, personal setup) stays local
+private/
+agentcontroller.toml

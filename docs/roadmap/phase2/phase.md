@@ -1,0 +1,4 @@
+---
+name: Sensors
+status: dropped
+---

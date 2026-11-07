@@ -1,0 +1,21 @@
+# Example: wrap command-line tools you already use. Copy to <PMJC_HOME>/connectors.d/ and edit.
+# Commands run as argv (no shell). Constrain every parameter with `pattern` or `choices`.
+kind: command
+id: mytools
+name: My command-line tools
+description: Git status of a project and disk usage.
+timeout: 60
+tools:
+  - name: mytools_git_status
+    description: Short git status of a project folder.
+    scope: read
+    untrusted_output: false
+    argv: [git, -C, "~/code/{project}", status, --short, --branch]
+    params:
+      project: {type: string, pattern: "^[A-Za-z0-9._-]{1,80}$", description: Folder name under ~/code}
+  - name: mytools_backup_now
+    description: Start the backup script (needs approval).
+    scope: act
+    argv: [python, ~/bin/backup.py, --target, "{target}"]
+    params:
+      target: {type: string, choices: [nas, cloud]}

@@ -1,0 +1,12 @@
+name: inbox-digest
+description: Weekday mornings, summarize important unread email and today's calendar.
+enabled: true
+trigger: {cron: "0 7 * * 1-5"}
+prompt: |
+  Use gmail_search with "is:unread newer_than:1d -category:promotions -category:social" and calendar_upcoming (days 1).
+  Give me: today's events (time, title), then up to 5 emails that look like they need a reply (sender, subject, one line why).
+scopes: [sources]
+tools: [gmail_search, calendar_upcoming]
+model: {private: true}
+notify_when: always
+max_turns: 6

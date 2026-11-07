@@ -1,0 +1,14 @@
+name: discord-watch
+description: Every 30 minutes, read a Discord channel (text and image links) and summarize anything that needs me.
+enabled: true
+trigger: {cron: "*/30 * * * *"}
+prompt: |
+  Read the last 30 messages in Discord channel 123456789012345678 with discord_read_channel.
+  If someone asked me something, mentioned a deadline, or posted something I should act on, list it in up to
+  3 short bullets (include the author). Otherwise answer exactly NOTHING.
+  If an action is needed (for example replying), propose it with discord_send; I will approve or deny it.
+scopes: [sources, actions]
+tools: [discord_read_channel, discord_send]
+model: {capabilities: [tools]}
+notify_when: not_empty
+max_turns: 6

@@ -1,0 +1,206 @@
+"""Model router: picks the first usable provider from the user's ordered list.
+
+Order and settings come from settings.yaml (dashboard -> Routing). A provider is skipped when it is disabled,
+lacks a capability the job needs, is cloud while the job is private, is over its monthly budget, is cooling
+down after a failure, or is unhealthy and can't be started.
+
+Local OpenAI-compatible hosts (LM Studio, Ollama, ...) are started on demand with their `start` command
+(argv, no shell; only editable in settings.yaml, never through the API), and LM Studio models are loaded
+with `lms load`. A GPU guard skips local hosts while the GPU is busy (e.g. a game is running).
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import shlex
+import shutil
+import subprocess
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+
+import httpx
+
+from . import config, creds, db
+from .config import ProviderConfig
+
+log = logging.getLogger("pmjc.router")
+_cooldown: dict[str, float] = {}
+COOLDOWN_S = 300
+
+
+@dataclass
+class Need:
+    capabilities: set[str] = field(default_factory=lambda: {"tools"})
+    private: bool = False  # local providers only; never fall back to the cloud
+    min_context: int = 0
+    order: list[str] | None = None  # job-specific provider order (ids)
+
+
+def month_spend(provider_id: str) -> float:
+    start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
+    r = db.q("SELECT COALESCE(SUM(usd),0) AS s FROM spend WHERE provider=? AND ts>=?", provider_id, start)
+    return float(r[0]["s"])
+
+
+def record_spend(p: ProviderConfig, tokens_in: int, tokens_out: int, usd: float | None = None) -> float:
+    if usd is None:
+        usd = tokens_in / 1e6 * p.price_in_per_mtok + tokens_out / 1e6 * p.price_out_per_mtok
+    db.x("INSERT INTO spend(ts,provider,usd,tokens_in,tokens_out) VALUES(?,?,?,?,?)",
+         time.time(), p.id, usd, tokens_in, tokens_out)
+    return usd
+
+
+def _argv(cmd: str | list[str]) -> list[str]:
+    return cmd if isinstance(cmd, list) else shlex.split(cmd, posix=os.name != "nt")
+
+
+def _run(cmd: str | list[str], timeout: int) -> bool:
+    argv = [a.strip('"') for a in _argv(cmd)]
+    try:
+        flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        r = subprocess.run(argv, timeout=timeout, capture_output=True, creationflags=flags)
+        return r.returncode == 0
+    except Exception as e:
+        log.warning("command %s failed: %s", argv[0], e)
+        return False
+
+
+def gpu_busy(threshold: int) -> bool:
+    smi = shutil.which("nvidia-smi")
+    if not smi:
+        return False
+    try:
+        flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        out = subprocess.run([smi, "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=10, creationflags=flags).stdout
+        return max(int(x) for x in out.split()) >= threshold
+    except Exception:
+        return False
+
+
+def api_key(p: ProviderConfig) -> str | None:
+    return creds.store().get(p.credential) if p.credential else None
+
+
+async def _models(p: ProviderConfig) -> list[str] | None:
+    headers = {"Authorization": f"Bearer {api_key(p)}"} if p.credential else {}
+    try:
+        async with httpx.AsyncClient(timeout=5) as c:
+            r = await c.get(p.base_url.rstrip("/") + "/models", headers=headers)
+            if r.status_code != 200:
+                return None
+            return [m.get("id", "") for m in r.json().get("data", [])]
+    except Exception:
+        return None
+
+
+async def _loaded(p: ProviderConfig) -> list[str] | None:
+    """Models actually loaded in memory (LM Studio's /api/v0/models), or None if the host doesn't report it."""
+    root = p.base_url.rstrip("/").removesuffix("/v1")
+    try:
+        async with httpx.AsyncClient(timeout=5) as c:
+            r = await c.get(root + "/api/v0/models")
+            if r.status_code != 200:
+                return None
+            return [m["id"] for m in r.json().get("data", []) if m.get("state") == "loaded"]
+    except Exception:
+        return None
+
+
+async def healthy(p: ProviderConfig, start: bool = True) -> bool:
+    start = start and config.load().auto_start_local
+    if p.kind == "claude_cli":
+        return shutil.which("claude") is not None and creds.store().has("claude.oauth_token")
+    if p.kind == "anthropic":
+        return bool(api_key(p))
+    if p.credential and not api_key(p):
+        return False
+    if p.trust == "local" and p.extra.get("skip_when_gpu_busy_percent") and gpu_busy(int(p.extra["skip_when_gpu_busy_percent"])):
+        log.info("%s skipped: GPU busy", p.id)
+        return False
+    models = await _models(p)
+    if models is None and start and p.start:
+        log.info("starting %s", p.id)
+        await asyncio.to_thread(_run, p.start, p.start_timeout)
+        deadline = time.time() + p.start_timeout
+        while models is None and time.time() < deadline:
+            await asyncio.sleep(3)
+            models = await _models(p)
+    if models is None:
+        return False
+    if not start and p.trust == "local":
+        # Auto-start off: don't let the host load a model on demand (LM Studio JIT); use only what is loaded.
+        loaded = await _loaded(p)
+        if loaded is not None:
+            if p.model:
+                return p.model in loaded
+            if not loaded:
+                return False
+            p.model = loaded[0]
+            return True
+    if p.model and p.model not in models:
+        load = p.extra.get("load") or _lms_load(p)
+        if not (start and p.load_model and load):
+            return False
+        log.info("loading %s on %s", p.model, p.id)
+        await asyncio.to_thread(_run, load, max(p.start_timeout, 300))
+        models = await _models(p) or []
+        return p.model in models
+    if not p.model:
+        if not models:
+            return False
+        p.model = models[0]  # whatever is loaded
+    return True
+
+
+def _lms_load(p: ProviderConfig) -> list[str] | None:
+    """`lms load <model>` for a local LM Studio host."""
+    if "127.0.0.1" not in (p.base_url or "") and "localhost" not in (p.base_url or ""):
+        return None
+    exe = shutil.which("lms") or os.path.expanduser("~/.lmstudio/bin/lms" + (".exe" if os.name == "nt" else ""))
+    return [exe, "load", p.model, "-y"] if os.path.exists(exe) else None
+
+
+async def candidates(need: Need) -> list[ProviderConfig]:
+    """Providers in preference order that pass the static checks (no health probe yet)."""
+    routing = config.load().routing
+    if need.order:
+        by_id = {p.id: p for p in routing}
+        routing = [by_id[i] for i in need.order if i in by_id]
+    out = []
+    for p in routing:
+        if not p.enabled:
+            continue
+        if need.private and p.trust != "local":
+            continue
+        if not need.capabilities.issubset(set(p.capabilities)):
+            continue
+        if need.min_context and p.context_tokens < need.min_context:
+            continue
+        if p.monthly_budget_usd is not None and month_spend(p.id) >= p.monthly_budget_usd:
+            continue
+        if _cooldown.get(p.id, 0) > time.time():
+            continue
+        out.append(p)
+    return out
+
+
+def mark_failed(p: ProviderConfig) -> None:
+    _cooldown[p.id] = time.time() + COOLDOWN_S
+
+
+async def status() -> list[dict]:
+    out = []
+    for p in config.load().routing:
+        out.append({"id": p.id, "kind": p.kind, "enabled": p.enabled, "trust": p.trust, "model": p.model,
+                    "healthy": await healthy(p, start=False) if p.enabled else False,
+                    "month_spend_usd": round(month_spend(p.id), 4), "monthly_budget_usd": p.monthly_budget_usd,
+                    "cooling_down": _cooldown.get(p.id, 0) > time.time()})
+    return out
+
+
+def dumps(o) -> str:
+    return json.dumps(o, default=str)

@@ -1,0 +1,14 @@
+id: jokes
+name: JokeAPI
+description: Random jokes.
+base_url: https://v2.jokeapi.dev
+tools:
+  - name: jokes_random
+    description: A random joke.
+    method: GET
+    path: /joke/{category}
+    scope: read
+    untrusted_output: true
+    params:
+      category: {type: string, in: path, default: Programming}
+      safe-mode: {type: string, in: query, default: ""}

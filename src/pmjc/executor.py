@@ -1,0 +1,141 @@
+"""Single path for every tool call: scope check, approval for side effects, audit.
+
+MCP, REST, CLI and the job agent all call `call_tool`, so the rules can't be bypassed by picking an interface.
+"""
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import inspect
+import json
+import logging
+import secrets
+import time
+from typing import Any
+
+from . import auth, config, db, registry
+from .auth import Caller
+
+log = logging.getLogger("pmjc.executor")
+
+
+class Denied(Exception):
+    pass
+
+
+def payload_hash(tool: str, args: dict) -> str:
+    return hashlib.sha256(json.dumps([tool, args], sort_keys=True, default=str).encode()).hexdigest()
+
+
+async def _invoke(fn, args: dict, caller: Caller | None = None) -> Any:
+    if "_caller" in inspect.signature(fn).parameters:
+        args = {**args, "_caller": caller}
+    res = fn(**args)
+    if inspect.isawaitable(res):
+        res = await res
+    return res
+
+
+async def call_tool(caller: Caller, name: str, args: dict | None = None, reason: str = "") -> Any:
+    args = args or {}
+    t = registry.get().tool(name)
+    if t is None:
+        raise Denied(f"unknown tool {name}")
+    h = payload_hash(name, args)
+    if caller.allowed_tools is not None and name not in caller.allowed_tools:
+        db.audit(caller.name, name, h, "denied", "not in this run's tool list")
+        raise Denied(f"{name} isn't available to {caller.name}")
+    need = t.mcp_scope
+    if not caller.can(need):
+        db.audit(caller.name, name, h, "denied", f"missing scope {need}")
+        raise Denied(f"{caller.name} lacks scope '{need}' for {name}")
+    if t.egress and caller.untrusted:
+        db.audit(caller.name, name, h, "denied", "egress after untrusted content")
+        raise Denied(f"{name} sends data off the machine and this run has read untrusted content; "
+                     "start a fresh run or ask the user")
+    if t.scope == "act":
+        auto = name in caller.auto_approve or name in config.load().auto_approve
+        if caller.untrusted or (caller.needs_approval and not auto):
+            why = reason or ("proposed by a run that read untrusted content" if caller.untrusted else "")
+            return await request_approval(caller, name, args, why)
+    try:
+        res = await _invoke(t.fn, args, caller)
+        db.audit(caller.name, name, h, "ok")
+        if t.scope == "act":
+            caller.acted = True
+        if t.untrusted_output:
+            caller.untrusted = True  # taint is derived, not declared
+        return res
+    except Exception as e:
+        db.audit(caller.name, name, h, "error", type(e).__name__)
+        raise
+
+
+async def request_approval(caller: Caller, name: str, args: dict, reason: str = "") -> dict:
+    aid = secrets.token_urlsafe(9)
+    ttl = config.load().approval_ttl_seconds
+    now = time.time()
+    db.x("INSERT INTO approvals(id,tool,args,payload_hash,requested_by,reason,status,created,expires) "
+         "VALUES(?,?,?,?,?,?,?,?,?)", aid, name, json.dumps(args, default=str), payload_hash(name, args),
+         caller.name, reason[:500], "pending", now, now + ttl)
+    db.audit(caller.name, name, payload_hash(name, args), "approval_requested", aid)
+    asyncio.create_task(_announce(aid, name, args, caller.name, reason))
+    return {"status": "pending_approval", "approval_id": aid, "expires_in_seconds": ttl,
+            "note": "A person must approve this in the pmjc dashboard or a notification. "
+                    "Check later with pmjc_approval_status."}
+
+
+async def _announce(aid: str, name: str, args: dict, by: str, reason: str) -> None:
+    preview = json.dumps(args, default=str)
+    if len(preview) > 600:
+        preview = preview[:600] + "..."
+    msg = f"{by} wants to run {name}\n{reason}\n{preview}"
+    approve = f"/approve/{aid}?sig={auth.sign('approve:' + aid)}"
+    deny = f"/approve/{aid}?deny=1&sig={auth.sign('deny:' + aid)}"
+    actions = [{"id": "approve", "title": "Approve", "path": approve}, {"id": "deny", "title": "Deny", "path": deny}]
+    for ch in registry.get().channels():
+        try:
+            await ch.notify("pmjc approval needed", msg, actions=actions)
+            return
+        except Exception as e:  # try the next channel
+            log.warning("approval announce via %s failed: %s", ch.id, e)
+
+
+async def decide(aid: str, approve: bool, decided_by: str) -> dict:
+    rows = db.q("SELECT * FROM approvals WHERE id=?", aid)
+    if not rows:
+        raise Denied("no such approval")
+    a = rows[0]
+    if a["status"] != "pending":
+        return {"status": a["status"], "result": a["result"]}
+    if time.time() > a["expires"]:
+        db.x("UPDATE approvals SET status='expired' WHERE id=?", aid)
+        return {"status": "expired"}
+    args = json.loads(a["args"])
+    if payload_hash(a["tool"], args) != a["payload_hash"]:
+        db.x("UPDATE approvals SET status='tampered' WHERE id=?", aid)
+        raise Denied("payload changed after the request")
+    # claim it first so it can only run once
+    claimed = db.x("UPDATE approvals SET status='running', decided=? WHERE id=? AND status='pending'", time.time(), aid)
+    if not claimed:
+        return {"status": "already decided"}
+    if not approve:
+        db.x("UPDATE approvals SET status='denied' WHERE id=?", aid)
+        db.audit(decided_by, a["tool"], a["payload_hash"], "denied_by_user", aid)
+        return {"status": "denied"}
+    t = registry.get().tool(a["tool"])
+    try:
+        res = await _invoke(t.fn, args)
+        out = json.dumps(res, default=str)[:20000]
+        db.x("UPDATE approvals SET status='done', result=? WHERE id=?", out, aid)
+        db.audit(decided_by, a["tool"], a["payload_hash"], "approved_ok", aid)
+        return {"status": "done", "result": res}
+    except Exception as e:
+        db.x("UPDATE approvals SET status='failed', result=? WHERE id=?", repr(e)[:2000], aid)
+        db.audit(decided_by, a["tool"], a["payload_hash"], "approved_error", aid)
+        return {"status": "failed", "error": repr(e)}
+
+
+def approval_status(aid: str) -> dict:
+    rows = db.q("SELECT id,tool,status,reason,created,expires,decided,result FROM approvals WHERE id=?", aid)
+    return rows[0] if rows else {"status": "unknown"}
