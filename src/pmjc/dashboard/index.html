@@ -46,7 +46,7 @@ async function api(path,opt={}){const r=await fetch(path,{...opt,headers:{"Autho
   if(r.status===401){sessionStorage.removeItem("pmjc");location.reload()} const t=await r.text(); let j; try{j=JSON.parse(t)}catch{j=t}
   if(!r.ok) throw new Error(j.detail||j.error||t); return j}
 const when=ts=>ts?new Date(ts*1000).toLocaleString():"";
-const TABS={Ask:askTab,Settings:settingsTab,Connectors:connectors,Routing:routing,Jobs:jobsTab,Approvals:approvals,Activity:activity,Tokens:tokens,Connect:connect};
+const TABS={Ask:askTab,Context:contextTab,Settings:settingsTab,Connectors:connectors,Routing:routing,Jobs:jobsTab,Approvals:approvals,Activity:activity,Tokens:tokens,Connect:connect};
 let tab=localStorage.getItem("pmjc-tab")||"Ask";
 function nav(){ $("#nav").innerHTML=Object.keys(TABS).map(t=>`<button class="${t===tab?"on":""}" data-t="${t}">${t}</button>`).join("");
   $("#nav").querySelectorAll("button").forEach(b=>b.onclick=()=>{tab=b.dataset.t;try{localStorage.setItem("pmjc-tab",tab)}catch{};nav();render()})}
@@ -195,6 +195,40 @@ async function tokens(){ const t=await api("/api/tokens");
     const r=await api("/api/tokens",{method:"POST",body:JSON.stringify({name:$("#tn").value||"client",scopes:sc})});$("#tv").textContent="Copy now (shown once): "+r.token};
   document.querySelectorAll("[data-r]").forEach(b=>b.onclick=async()=>{await api("/api/tokens/"+b.dataset.r,{method:"DELETE"});render()});
   $("#kill").onclick=async()=>{if(confirm("Revoke all tokens and pause jobs?")){await api("/api/kill",{method:"POST"});sessionStorage.removeItem("pmjc");location.reload()}};
+}
+
+async function contextTab(){
+  const [md,th,nt,ct]=await Promise.all([api("/api/context/model-md"),api("/api/context/threads?include_closed=true"),api("/api/context/notes"),api("/api/context/contacts")]);
+  const trust=t=>`<span class="${t==="untrusted"?"bad":t==="owner"?"ok":"muted"}">${esc(t)}</span>`;
+  const handles=h=>Object.entries(h||{}).map(([k,v])=>`${esc(k)}: ${esc(v)}`).join("<br>");
+  const contactRow=(c,pending)=>`<tr><td>${esc(c.name)}</td><td>${esc((c.aliases||[]).join(", "))}</td><td class="muted">${handles(c.handles)}</td><td>${pending?
+    `<button class="b p" data-cd="approve" data-n="${esc(c.name)}">Approve</button> <button class="b d" data-cd="reject" data-n="${esc(c.name)}">Reject</button>`:
+    `<button class="b d" data-cdel="${esc(c.name)}">Delete</button>`}</td></tr>`;
+  $("#main").innerHTML=`<div class="card"><b>model.md</b> <span class="muted">standing rules given to every model (version ${esc(md.hash)}). Keep it short.</span>
+    <textarea id="mdt" style="min-height:260px">${esc(md.text)}</textarea>
+    <div class="row"><button class="b p" id="mds">Save</button><span id="mdst" class="muted"></span></div></div>
+   <div class="card"><b>Threads</b><table><tr><th>Updated</th><th>Title</th><th>Status</th><th>Last</th><th></th></tr>${th.map(t=>`<tr><td>${when(t.updated)}</td>
+    <td>${esc(t.title)} <span class="muted">${esc(t.id)}</span>${t.private?' <span class="muted">private</span>':""}</td><td>${esc(t.status)}${t.unread?' <b>unread</b>':""}</td>
+    <td class="muted">${esc(t.last)}</td><td><button class="b" data-tv="${esc(t.id)}">View</button>${t.status!=="closed"?` <button class="b d" data-tc="${esc(t.id)}">Close</button>`:""}</td></tr>`).join("")||'<tr><td class="muted">None yet.</td></tr>'}</table>
+    <div id="tview"></div></div>
+   <div class="card"><b>Pending contacts</b> <span class="muted">proposed by agents; nothing uses them until you approve</span><table><tr><th>Name</th><th>Aliases</th><th>Handles</th><th></th></tr>
+    ${ct.pending.map(c=>contactRow(c,true)).join("")||'<tr><td class="muted">None.</td></tr>'}</table></div>
+   <div class="card"><b>Contacts</b><table><tr><th>Name</th><th>Aliases</th><th>Handles</th><th></th></tr>${ct.active.map(c=>contactRow(c,false)).join("")}</table>
+    <div class="row"><input id="cn" placeholder="name"><input id="ca" placeholder="aliases, comma separated"><input id="ch" class="grow" placeholder="handles as key=value, comma separated (phone=+15550100, discord_user_id=123...)"><button class="b p" id="cs">Save contact</button></div></div>
+   <div class="card"><b>Notes</b> <span class="muted">shared by every session; tag "pinned" shows at the start of each one</span><table><tr><th>Key</th><th>Value</th><th>Tags</th><th>By</th><th></th></tr>${nt.map(n=>`<tr><td>${esc(n.key)}</td>
+    <td><pre>${esc(n.value)}</pre></td><td class="muted">${esc((n.tags||[]).join(", "))}</td><td>${trust(n.trust)}</td><td><button class="b d" data-nd="${esc(n.key)}">Delete</button></td></tr>`).join("")||'<tr><td class="muted">None yet.</td></tr>'}</table>
+    <div class="row"><input id="nk" placeholder="key"><input id="nv" class="grow" placeholder="value"><label class="row"><input type="checkbox" id="np"> pinned</label><button class="b p" id="ns">Save note</button></div></div>`;
+  $("#mds").onclick=async()=>{await api("/api/context/model-md",{method:"PUT",body:JSON.stringify({text:$("#mdt").value})});$("#mdst").textContent="Saved. Running sessions pick it up on their next pmjc_context."};
+  document.querySelectorAll("[data-tv]").forEach(b=>b.onclick=async()=>{const t=await api("/api/context/threads/"+encodeURIComponent(b.dataset.tv));
+    $("#tview").innerHTML=`<h4>${esc(t.title)} <span class="muted">${esc(t.id)} · ${esc(t.status)}</span></h4><table>${t.items.map(i=>`<tr><td>${when(i.ts)}</td><td>${esc(i.kind)}</td><td>${esc(i.author)}</td>
+      <td><pre>${esc(i.text)}</pre></td></tr>`).join("")}</table>${t.acts_done.length?`<p class="muted">Acts done: ${esc(t.acts_done.map(a=>a.tool).join(", "))}</p>`:""}`});
+  document.querySelectorAll("[data-tc]").forEach(b=>b.onclick=async()=>{await api(`/api/context/threads/${encodeURIComponent(b.dataset.tc)}/close`,{method:"POST"});render()});
+  document.querySelectorAll("[data-cd]").forEach(b=>b.onclick=async()=>{await api(`/api/context/contacts/${encodeURIComponent(b.dataset.n)}/${b.dataset.cd}`,{method:"POST"});render()});
+  document.querySelectorAll("[data-cdel]").forEach(b=>b.onclick=async()=>{await api("/api/context/contacts/"+encodeURIComponent(b.dataset.cdel),{method:"DELETE"});render()});
+  document.querySelectorAll("[data-nd]").forEach(b=>b.onclick=async()=>{await api("/api/context/notes/"+encodeURIComponent(b.dataset.nd),{method:"DELETE"});render()});
+  $("#cs").onclick=async()=>{const handles={};$("#ch").value.split(",").forEach(p=>{const i=p.indexOf("=");if(i>0)handles[p.slice(0,i).trim()]=p.slice(i+1).trim()});
+    await api("/api/context/contacts",{method:"PUT",body:JSON.stringify({name:$("#cn").value.trim(),aliases:$("#ca").value.split(",").map(s=>s.trim()).filter(Boolean),handles})});render()};
+  $("#ns").onclick=async()=>{await api("/api/context/notes",{method:"PUT",body:JSON.stringify({key:$("#nk").value.trim(),value:$("#nv").value,tags:$("#np").checked?["pinned"]:[]})});render()};
 }
 
 async function connect(){ const o=location.origin;

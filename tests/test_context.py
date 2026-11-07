@@ -402,3 +402,27 @@ async def test_ask_and_jobs_include_model_md_and_thread(home, monkeypatch):
     big = "x" * 20000
     (home / "model.md").write_text(big, encoding="utf-8")
     assert len(memory.system_block()) < 8400
+
+
+def test_context_endpoints_are_admin_only_and_work(home):
+    from fastapi.testclient import TestClient
+    from pmjc import auth, memory, server
+    c = TestClient(server.create_app(), base_url="http://127.0.0.1:8770")
+    adm = {"Authorization": "Bearer " + auth.create_token("dash", ["admin"])}
+    low = {"Authorization": "Bearer " + auth.create_token("agent", ["sources", "jobs"])}
+    for path in ("/api/context/model-md", "/api/context/threads", "/api/context/notes", "/api/context/contacts"):
+        assert c.get(path, headers=low).status_code == 403, path
+        assert c.get(path, headers=adm).status_code == 200, path
+    assert c.put("/api/context/model-md", json={"text": "# hi"}, headers=low).status_code == 403
+    assert c.put("/api/context/model-md", json={"text": "# hi"}, headers=adm).json()["ok"]
+    assert c.get("/api/context/model-md", headers=adm).json()["text"] == "# hi"
+    assert c.put("/api/context/notes", json={"key": "k", "value": "v", "tags": ["pinned"]}, headers=adm).json()["trust"] == "owner"
+    assert c.get("/api/context/notes", headers=adm).json()[0]["key"] == "k"
+    memory.contact_set("Pat", handles={"phone": "+15550100"}, caller=agent())
+    assert c.get("/api/context/contacts", headers=adm).json()["pending"][0]["name"] == "Pat"
+    assert c.post("/api/context/contacts/Pat/approve", headers=adm).json()["status"] == "approved"
+    assert c.get("/api/context/contacts", headers=adm).json()["active"][0]["name"] == "Pat"
+    tid = memory.thread_new("t")
+    assert c.get(f"/api/context/threads/{tid}", headers=adm).json()["id"] == tid
+    assert c.post(f"/api/context/threads/{tid}/close", headers=adm).json()["status"] == "closed"
+    assert c.delete("/api/context/notes/k", headers=adm).json()["deleted"]

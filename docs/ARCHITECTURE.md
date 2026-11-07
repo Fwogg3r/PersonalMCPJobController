@@ -137,7 +137,18 @@ See [CONNECTORS.md](CONNECTORS.md).
 - **Silencing.** `pmjc notifications silence <AUMID>` sets `Enabled=1`, `ShowInActionCenter=1` and `ShowBanner=0` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\<AUMID>`, creating the key if it's missing. The value names for sound and lock screen aren't certain, so `pmjc notifications learn <AUMID>` records the exact values from a manual toggle.
 - **Chrome** shows every site under one app ID. Install a site as an app, or give it a separate profile, to silence it alone.
 
+## Context across sessions
+`memory.py` owns the state (SQLite tables `threads`, `thread_items`, `thread_acts`, `notes`) and `model.md` in `PMJC_HOME`.
+- **Trust tiers.** `trust_of(caller)` gives owner (admin caller), untrusted (tainted caller) or agent. Items, notes and threads store it. Anything shown to a model goes through functions that never emit untrusted text (`threads_recent`, `context_bundle`, `context_header`); the only way to read it is `pmjc_thread_get`, an `untrusted_output` tool, so the reader is tainted by the normal executor rule.
+- **Writes.** Tainted callers can't write notes or contacts. Agents can't overwrite or delete owner notes. Agent-proposed contacts are stored under `pending:contact:<name>` and only an admin endpoint promotes them.
+- **Threads and runs.** `Caller.thread_id` binds a run to a thread (set by `pmjc_thread_start`/`pmjc_thread_get`, by `ask`, by watches and jobs). Approvals and job runs record it, and approval outcomes append to the thread (tool name and status only).
+- **Act ledger.** After an act tool runs in a thread, `thread_acts` records tool + payload hash. `executor.call_tool` asks for approval again, even for auto-approved tools, when the same pair repeats in that thread.
+- **Delivery.** Watches create or reuse a thread, append the result (untrusted when it came from an event, poll or tainted run), mark it updated and unread, and add `Resume: thread ...` to the notification. `model.md` goes into the system prompt of ask, jobs and watches (`memory.system_block`, 8 KB cap, with a version hash), into the FastMCP instructions, and into a header prepended to the first tool result of each MCP session (`mcp_server.with_first_call_header`, keyed by `Mcp-Session-Id`, or per process on stdio).
+- **Capability awareness.** `Connector.limitations` / `native_alternatives` (also YAML keys) are appended to tool descriptions by the registry. `capabilities.CATALOG` is the task-level view behind `pmjc_capabilities` and `docs/CAPABILITIES.md`; for tainted callers the native and workaround routes are dropped.
+- **Handoff.** `handoff.py` validates contact handles and builds deep links; `pmjc_handoff` notifies, records and can start an event watch on `windows_notifications` linked to the thread. Refused for tainted callers.
+
 ## Deferred (see the roadmap)
+- `pmjc_delegate`: running a user-configured, more capable local agent for tasks pmjc's tools can't do. Needs its own threat model (argv templates from settings only, act scope, never from tainted runs).
 - Multiple accounts per connector (`gmail:personal`, `gmail:work`).
 - Mounting existing MCP servers as connectors (FastMCP proxy, mapping `readOnlyHint`/`destructiveHint` to read/act) and importing OpenAPI specs.
 - Running the browser in a separate process so a hung Chromium can't stall the server.

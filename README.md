@@ -107,6 +107,19 @@ Watches expire (default 24 h, at most 7 days), can be cancelled, and survive res
 
 `/api/ask` and `pmjc ask` need a model, picked from your routing list. Agents connected over MCP bring their own model.
 
+## Context across sessions
+
+Agent sessions are short and forget everything. pmjc is the one place they share, so a fresh session from **any** vendor's model, using only pmjc's tools, can pick up where the last one stopped.
+
+- **Threads.** Every request, watch and handoff lives in a thread (`t_xxxxxx`) holding the request, answers, notes, watch results, handoffs and approval outcomes. A watch that fires after the session ended marks its thread *updated*; the notification ends with `Resume: thread t_xxxxxx`. Any session resumes it with `pmjc_thread_get`. `/api/ask` and `pmjc ask --thread` take and return `thread_id` too.
+- **`model.md`.** Your standing rules, created from a template in the data folder on first run and editable in the dashboard (Context tab). It is given to every model: in the MCP server instructions, at the top of each MCP session's first tool result, by `pmjc_context`, and in the system prompt of `/api/ask`, jobs and watches (capped at 8 KB).
+- **Shared notes and contacts.** `pmjc_memory_*` keeps durable facts; `pmjc_contact_*` keeps people with aliases and per-service handles (the display name each app shows, ids, phone, email) so "Sam" can be matched to what Discord displays.
+- **Capability awareness.** Each connector declares its limits and what a client with better abilities should use; they are appended to every tool description. `pmjc_capabilities(task)` gives the full picture, including the closest workaround ([docs/CAPABILITIES.md](docs/CAPABILITIES.md)).
+- **Handoff.** When only you can do the last step (send as yourself, call), `pmjc_handoff` notifies you with a one-tap deep link (Discord DM, SMS or WhatsApp with the text filled in, email, call), records it in the thread and can watch for the reply.
+- **Safe by construction.** Every item has a trust tier: *owner* (you), *agent* (a clean session) or *untrusted* (third-party content, or anything written by a session that had read some). Context given to a session contains owner text verbatim, agent text labelled, and untrusted text never: only "watch result available". Sessions that read third-party content can't write notes or contacts, agents can't overwrite your notes, contacts proposed by agents wait for your approval, and an action already done in a thread asks for approval again before it repeats. Closed threads are deleted after `thread_retention_days` (default 90).
+
+How it works from any client: connect, read the first result's context header (or call `pmjc_context`), `pmjc_thread_get` the thread if the request continues one, and `pmjc_thread_note` what you did. MCP clients that support prompts also get `resume_thread`.
+
 ## Connect your agents
 
 | Client | How |

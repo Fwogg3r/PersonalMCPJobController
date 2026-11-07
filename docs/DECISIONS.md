@@ -56,3 +56,12 @@ Design decisions and the reasoning behind them, newest first. Details of how eac
 - **A connector is one Python class or one YAML file.**
 - **Personal data never enters the repo:** settings, credentials, jobs and browser profiles live in `PMJC_HOME`.
 - **Model routing is an ordered, user-configurable list:** local first, then Claude Code on the user's plan, then paid APIs with budgets. A run stays on one provider, and `private` jobs stay local.
+
+## Cross-session context
+- **Problem:** sessions are stateless and come from different vendors, but a request (a watch that fires later, a message waiting for a reply) outlives them.
+- **Decision:** pmjc keeps the shared state: threads, notes, contacts and a user-editable `model.md`. Context reaches a model four ways, because no single one is reliable across clients: server instructions, a header on the first tool result of each MCP session, the `pmjc_context` tool, and the system prompt of pmjc's own runs. The first two work even if the model never calls `pmjc_context`.
+- **Trust tiers instead of "tainted can't write".** Blocking writes from tainted sessions isn't enough: a clean agent can still be fed a poisoned value. So every item carries owner/agent/untrusted provenance; models are given owner text verbatim, agent text labelled and untrusted text never (only metadata); agents can't overwrite owner notes; agent-proposed contacts need the user's approval (a contact handle ends up in a deep link).
+- **Act ledger.** The failure that matters when a session resumes is repeating a side effect. Recording tool + payload hash per thread, and asking for approval again on a repeat, is cheap and independent of the model's judgment.
+- **Handoff over delegation.** When pmjc can't act as the user, it notifies them with a one-tap link rather than driving a more capable local agent. Delegation (`pmjc_delegate`) widens the attack surface (a second agent with browser control) and is deferred until it has its own threat model.
+- **Limits live next to the tools.** `limitations` and `native_alternatives` are appended to each tool's description, so a blank session sees them in the tool list; `pmjc_capabilities` adds the task-level routes and drops the native and workaround routes for tainted sessions, so third-party text can't steer a model toward them.
+- **Retention.** Closed threads are deleted after 90 days (`thread_retention_days`); `private` on a thread is sticky and keeps its asks on local models.
