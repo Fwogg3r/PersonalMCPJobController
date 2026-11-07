@@ -6,7 +6,7 @@ inbound port or tunnel is needed. Only messages from `owner_user_ids` are read; 
 - A message in one of `channel_ids` starts a Discord thread and a pmjc thread. Replies in that Discord thread
   continue the conversation; the last `history_turns` exchanges go back to the model. A message in any thread under
   a door channel (also one made in the Discord UI) starts its own pmjc thread the same way.
-- Slash commands (/tool, /fwog; see discord_commands) and an optional per-thread tool trace.
+- Slash commands (/tool, /pmjc; see discord_commands) and an optional per-thread tool trace.
 - A DM to the bot works the same way, one conversation per DM until you send `new`.
 - Each message runs through ask() (connectors, watches, jobs) with the configured scopes. Act tools still need
   approval: the door posts Approve/Deny buttons in the conversation, and only an owner's click counts.

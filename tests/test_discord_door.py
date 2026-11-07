@@ -221,7 +221,7 @@ async def test_autocomplete_tools_and_providers(door):
     body = door.api.calls[-1][2]
     assert body["type"] == 8 and [c["value"] for c in body["data"]["choices"]] == ["fake_read"]
     focused = [{"type": 1, "name": "model", "options": [{"type": 3, "name": "provider", "value": "", "focused": True}]}]
-    await door.on_interaction(cmd("fwog", focused, kind=4))
+    await door.on_interaction(cmd("pmjc", focused, kind=4))
     assert "auto" in [c["value"] for c in door.api.calls[-1][2]["data"]["choices"]]
 
 
@@ -240,7 +240,7 @@ async def test_model_private_and_trace_prefs_reach_ask(door, monkeypatch):
     monkeypatch.setattr(agent, "run", fake_run)
     await door.on_message(msg("first"))  # creates thr1
     for opts in (sub("model", provider="prov1"), sub("private", state="on"), sub("trace", state="on")):
-        await door.on_interaction(cmd("fwog", opts, channel="thr1"))
+        await door.on_interaction(cmd("pmjc", opts, channel="thr1"))
     await door.on_message(msg("second", channel="thr1"))
     assert seen["order"] == ["prov1"] and seen["private"] is True and "discord_dm" in seen["system"]
     traces = [b["content"] for _, b in door.api.sent("thr1") if b["content"].startswith("-# tool")]
@@ -251,11 +251,11 @@ async def test_model_private_and_trace_prefs_reach_ask(door, monkeypatch):
 
 async def test_autoapprove_edit(door):
     from pmjc import config
-    await door.on_interaction(cmd("fwog", sub("autoapprove", "add", tool="fake_send")))
+    await door.on_interaction(cmd("pmjc", sub("autoapprove", "add", tool="fake_send")))
     assert "fake_send" in config.load().auto_approve and "Warning" in patched(door)[-1]["content"]
-    await door.on_interaction(cmd("fwog", sub("autoapprove", "add", tool="fake_read"), iid="c2"))
+    await door.on_interaction(cmd("pmjc", sub("autoapprove", "add", tool="fake_read"), iid="c2"))
     assert "fake_read" not in config.load().auto_approve
-    await door.on_interaction(cmd("fwog", sub("autoapprove", "remove", tool="fake_send"), iid="c3"))
+    await door.on_interaction(cmd("pmjc", sub("autoapprove", "remove", tool="fake_send"), iid="c3"))
     assert "fake_send" not in config.load().auto_approve
 
 
@@ -263,7 +263,7 @@ async def test_delete_asks_then_deletes_and_closes(door):
     from pmjc import memory
     await door.on_message(msg("hello"))
     tid = door.thread_for("thr1")
-    await door.on_interaction(cmd("fwog", sub("delete"), channel="thr1"))
+    await door.on_interaction(cmd("pmjc", sub("delete"), channel="thr1"))
     buttons = patched(door)[-1]["components"][0]["components"]
     assert [b["label"] for b in buttons] == ["Delete", "Cancel"]
     click = {"id": "i9", "token": "tk", "type": 3, "application_id": "999", "member": {"user": {"id": OWNER}}}
@@ -284,15 +284,15 @@ async def test_new_notify_switch_friend_and_registration(door):
     await door.commands.register()
     puts = [c for c in door.api.calls if c[0] == "PUT"]
     assert puts and puts[0][1] == "/applications/999/guilds/7/commands"
-    assert {c["name"] for c in puts[0][2]} == {"tool", "fwog"}
-    await door.on_interaction(cmd("fwog", sub("new", title="Plans")))
+    assert {c["name"] for c in puts[0][2]} == {"tool", "pmjc"}
+    await door.on_interaction(cmd("pmjc", sub("new", title="Plans")))
     assert door.thread_for("thr1")
-    await door.on_interaction(cmd("fwog", sub("notify"), iid="c2"))
+    await door.on_interaction(cmd("pmjc", sub("notify"), iid="c2"))
     s = config.load()
     assert s.connectors["discord"]["notify_channel_id"] == CH and s.notify_channels[0] == "discord"
-    await door.on_interaction(cmd("fwog", sub("switch", name="auto_start_local", state="on"), iid="c3"))
+    await door.on_interaction(cmd("pmjc", sub("switch", name="auto_start_local", state="on"), iid="c3"))
     assert config.load().auto_start_local is True
-    await door.on_interaction(cmd("fwog", sub("friend", "add", name="Sam", user_id="42"), iid="c4"))
+    await door.on_interaction(cmd("pmjc", sub("friend", "add", name="Sam", user_id="42"), iid="c4"))
     assert memory.contact_get("Sam")["handles"]["discord_user_id"] == "42"
-    await door.on_interaction(cmd("fwog", sub("friend", "list"), iid="c5"))
+    await door.on_interaction(cmd("pmjc", sub("friend", "list"), iid="c5"))
     assert "Sam" in patched(door)[-1]["content"]

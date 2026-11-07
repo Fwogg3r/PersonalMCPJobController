@@ -1,4 +1,4 @@
-"""Slash commands for the Discord front door (/tool and /fwog). Owner only; registered as guild commands.
+"""Slash commands for the Discord front door (/tool and /pmjc, renamable). Owner only; registered as guild commands.
 
 Every command is acknowledged at once (deferred) and answered by editing the original reply, because tools and jobs
 can take longer than Discord's 3 second limit. `/tool` bypasses the model but not approvals.
@@ -38,7 +38,7 @@ def definitions() -> list[dict]:
         {"type": 1, "name": "tool", "description": "Run a pmjc tool directly (no model; act tools still need approval)",
          "options": [_s("name", "Tool name", required=True, autocomplete=True),
                      _s("args", "JSON object of arguments")]},
-        {"type": 1, "name": "fwog", "description": "Control pmjc", "options": [
+        {"type": 1, "name": config.load().discord_door.command_name, "description": "Control pmjc", "options": [
             _sub("new", "Start a new thread", _s("title", "Thread title", required=True)),
             _sub("close", "Archive this thread and close its pmjc thread"),
             _sub("delete", "Delete this thread (asks first)"),
@@ -134,7 +134,7 @@ class Commands:
         ch = i.get("channel_id", "")
         try:
             out = await (self.tool(user["id"], ch, vals) if data.get("name") == "tool"
-                         else self.fwog(user["id"], ch, path, vals))
+                         else self.control(user["id"], ch, path, vals))
         except Exception as e:
             log.exception("slash command failed")
             out = f"That failed: {type(e).__name__}: {str(e)[:300]}"
@@ -203,8 +203,8 @@ class Commands:
         text = res if isinstance(res, str) else json.dumps(res, indent=2, default=str)
         return codeblocks(text)
 
-    # ---- /fwog
-    async def fwog(self, user_id: str, ch: str, path: list[str], v: dict):
+    # ---- /pmjc (name from discord_door.command_name)
+    async def control(self, user_id: str, ch: str, path: list[str], v: dict):
         d = self.door
         head = path[0] if path else ""
         sub = path[1] if len(path) > 1 else ""
