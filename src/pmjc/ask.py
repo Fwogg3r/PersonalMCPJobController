@@ -67,7 +67,7 @@ def history(thread_id: str, turns: int) -> tuple[str, bool]:
 
 
 async def ask(caller: Caller, text: str, private: bool = False, provider_order: list[str] | None = None,
-              thread_id: str | None = None, history_turns: int = 0) -> dict:
+              thread_id: str | None = None, history_turns: int = 0, extra_system: str = "") -> dict:
     tools = [t for t in registry.get().tools()
              if (t.scope == "read" and caller.can("sources")) or (t.name in WATCH_TOOLS and caller.can("jobs"))
              or (t.scope == "act" and caller.can("actions"))]
@@ -89,7 +89,8 @@ async def ask(caller: Caller, text: str, private: bool = False, provider_order: 
         caller.untrusted = caller.untrusted or tainted
     memory.thread_add(thread_id, "request", text, author=caller.name, trust=memory.trust_of(caller))
     started_before = {r["id"] for r in db.q("SELECT id FROM watches WHERE created_by=?", caller.name)}
-    res = await agent.run(prompt, caller, tools, router.Need(private=private, order=provider_order), system=ASK_SYSTEM + memory.system_block(),
+    system = ASK_SYSTEM + memory.system_block() + (f"\n\n{extra_system}" if extra_system else "")
+    res = await agent.run(prompt, caller, tools, router.Need(private=private, order=provider_order), system=system,
                           max_turns=10)
     watches = [r["id"] for r in db.q("SELECT id FROM watches WHERE created_by=?", caller.name) if r["id"] not in started_before]
     record(text, res.text, res.provider, caller.name)

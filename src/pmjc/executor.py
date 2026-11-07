@@ -37,6 +37,25 @@ async def _invoke(fn, args: dict, caller: Caller | None = None) -> Any:
 
 
 async def call_tool(caller: Caller, name: str, args: dict | None = None, reason: str = "") -> Any:
+    """Run a tool through every check. If the caller has an `on_tool` hook it hears (name, args, status), never results."""
+    status = "error"
+    try:
+        res = await _call_tool(caller, name, args, reason)
+        status = "pending_approval" if isinstance(res, dict) and res.get("status") == "pending_approval" else "ok"
+        return res
+    except Denied:
+        status = "denied"
+        raise
+    finally:
+        hook = getattr(caller, "on_tool", None)
+        if hook:
+            try:
+                await hook(name, args or {}, status)
+            except Exception:
+                log.warning("on_tool hook failed", exc_info=True)
+
+
+async def _call_tool(caller: Caller, name: str, args: dict | None, reason: str) -> Any:
     args = args or {}
     t = registry.get().tool(name)
     if t is None:

@@ -10,6 +10,7 @@ import hmac
 import json
 import secrets
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from . import config, db
@@ -27,6 +28,7 @@ class Caller:
     allowed_tools: set[str] | None = None  # None = every tool the scopes allow
     thread_id: str | None = None  # the thread this run belongs to (act ledger, approvals)
     acted: bool = False  # an act tool has executed in this run (no provider fallback after this)
+    on_tool: Callable | None = field(default=None, repr=False, compare=False)  # async (name, args, status); trace hook
 
     def can(self, scope: str) -> bool:
         return "admin" in self.scopes or scope in self.scopes

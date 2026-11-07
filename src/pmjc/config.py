@@ -91,6 +91,7 @@ class DiscordDoorConfig(BaseModel):
     scopes: list[str] = Field(default_factory=lambda: ["sources", "jobs", "actions"])
     history_turns: int = 6  # earlier request/answer pairs passed back to the model
     private: bool = False  # keep these conversations on local models
+    trace: bool = False  # post one line per tool call in the conversation (per-thread override: /fwog trace)
 
 
 class Settings(BaseModel):
