@@ -95,6 +95,8 @@ class DiscordDoorConfig(BaseModel):
     auto_title: bool = True  # rename threads the door starts to a short topic after the first answer
     log_channel_id: str = ""  # every door run's pmjc log lines are posted here
     trace: bool = False  # post one line per tool call in the conversation (per-thread override: /pmjc trace)
+    forward_dms: bool = True  # DMs from anyone else (e.g. replies to discord_dm) are forwarded to the owners' DMs
+    # and added to the pmjc thread that messaged that person; never acted on
 
 
 class Settings(BaseModel):

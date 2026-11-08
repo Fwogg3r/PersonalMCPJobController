@@ -40,6 +40,7 @@ CREATE INDEX IF NOT EXISTS thread_items_t ON thread_items(thread_id, ts);
 CREATE TABLE IF NOT EXISTS thread_acts (
   id INTEGER PRIMARY KEY, thread_id TEXT, ts REAL, tool TEXT, payload_hash TEXT, approval_id TEXT);
 CREATE INDEX IF NOT EXISTS thread_acts_t ON thread_acts(thread_id, tool, payload_hash);
+CREATE TABLE IF NOT EXISTS reply_routes (peer TEXT PRIMARY KEY, thread_id TEXT, ts REAL);
 CREATE TABLE IF NOT EXISTS notes (
   key TEXT PRIMARY KEY, value TEXT, tags TEXT, updated REAL, author TEXT, trust TEXT DEFAULT 'agent');
 """
@@ -256,6 +257,21 @@ def act_record(tid: str | None, tool: str, payload_hash: str, approval_id: str =
     db.x("INSERT INTO thread_acts(thread_id,ts,tool,payload_hash,approval_id) VALUES(?,?,?,?,?)",
          tid, time.time(), tool, payload_hash, approval_id)
     thread_add(tid, "act", f"{tool} executed", author="pmjc", trust="owner")
+
+
+# --- reply routes --------------------------------------------------------------------------------------------
+# A send tool that can be answered returns {"reply_route": "<service>:<peer id>"}; the executor stores which thread
+# sent it, so an incoming reply from that peer (e.g. a DM to the Discord bot) lands in the same thread.
+def reply_route_set(peer: str, tid: str | None) -> None:
+    if not peer or not tid or not thread_exists(tid):
+        return
+    db.x("INSERT OR REPLACE INTO reply_routes(peer, thread_id, ts) VALUES(?,?,?)", peer, tid, time.time())
+
+
+def reply_route_get(peer: str) -> str | None:
+    _init()
+    r = db.q("SELECT thread_id FROM reply_routes WHERE peer=?", peer)
+    return r[0]["thread_id"] if r and thread_exists(r[0]["thread_id"]) else None
 
 
 # --- notes ---------------------------------------------------------------------------------------------------

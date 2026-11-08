@@ -1,7 +1,8 @@
 """Discord front door: chat with pmjc from any device through your own bot.
 
 Off by default (settings.discord_door). The service opens an outbound websocket to the Discord gateway, so no
-inbound port or tunnel is needed. Only messages from `owner_user_ids` are read; everyone else is ignored.
+inbound port or tunnel is needed. Only messages from `owner_user_ids` are read; everyone else is ignored,
+except that their DMs to the bot (e.g. replies to discord_dm) are forwarded to the owners' DMs, untouched by any model.
 
 - A message in one of `channel_ids` starts a Discord thread and a pmjc thread. Replies in that Discord thread
   continue the conversation; the last `history_turns` exchanges go back to the model. A message in any thread under
@@ -182,8 +183,13 @@ class Door:
     # ---- dispatch events
     async def on_message(self, m: dict) -> None:
         author = m.get("author") or {}
-        if author.get("bot") or not self.is_owner(author.get("id")):
-            return  # never read anyone else's messages
+        if author.get("bot"):
+            return
+        if not self.is_owner(author.get("id")):
+            if not m.get("guild_id") and self.cfg.forward_dms:  # someone DMed the bot (e.g. a reply to discord_dm): pass it on, never act on it
+                self.spawn(self.forward_dm(m, author))
+            return  # never act on anyone else's messages
+
         if m.get("type", 0) not in (0, 19):
             return  # system messages (e.g. "started a thread") are not requests
         text = (m.get("content") or "").strip()
@@ -360,6 +366,32 @@ class Door:
         await self.api("DELETE", f"/channels/{channel_id}", None)
 
     # ---- REST helpers
+    async def forward_dm(self, m: dict, author: dict) -> None:
+        """Copy a non-owner's DM to each owner's DM, titled with who sent it. If a pmjc thread messaged this person
+        (discord_dm), the reply is also added to that thread as untrusted content, so its next run sees it. Nothing
+        is run in response: a model only reads it when the owner continues that thread."""
+        name = author.get("global_name") or author.get("username") or "someone"
+        uid = str(author.get("id", "?"))
+        title = f"**DM from {name}** (@{author.get('username', '?')}, id {uid})"
+        body = (m.get("content") or "").strip()
+        urls = [a.get("url") for a in m.get("attachments", []) if a.get("url")]
+        if urls:
+            body += ("\n" if body else "") + "attachments: " + " ".join(urls)
+        tid = memory.reply_route_get(f"discord:{uid}")
+        if tid:
+            with contextlib.suppress(Exception):
+                memory.thread_add(tid, "reply", f"Discord DM reply from {name} (@{author.get('username', '?')}): {body}",
+                                  author=f"discord:{uid}", trust="untrusted", status="updated", unread=True)
+                r = db.q("SELECT title FROM threads WHERE id=?", tid)
+                title += f" re: {r[0]['title'] if r and r[0]['title'] else tid}"
+        text = title + "\n" + ("\n".join("> " + ln for ln in body.splitlines()) or "> (empty message)")
+        for owner in self.cfg.owner_user_ids:
+            try:
+                dm = await self.api("POST", "/users/@me/channels", {"recipient_id": str(owner)})
+                await self.send(dm["id"], text)
+            except Exception:
+                log.warning("could not forward a DM from %s to owner %s", author.get("id"), owner)
+
     async def send(self, channel_id: str, content: str, components: list | None = None) -> dict:
         body = {"content": content[:MAX_MSG], "allowed_mentions": {"parse": []}}
         if components:

@@ -27,6 +27,12 @@ def payload_hash(tool: str, args: dict) -> str:
     return hashlib.sha256(json.dumps([tool, args], sort_keys=True, default=str).encode()).hexdigest()
 
 
+def _route(res: Any, tid: str | None) -> None:
+    """Remember which thread sent a message that can be answered (see memory.reply_route_set)."""
+    if isinstance(res, dict) and res.get("reply_route"):
+        memory.reply_route_set(str(res["reply_route"]), tid)
+
+
 async def _invoke(fn, args: dict, caller: Caller | None = None) -> Any:
     if "_caller" in inspect.signature(fn).parameters:
         args = {**args, "_caller": caller}
@@ -85,6 +91,7 @@ async def _call_tool(caller: Caller, name: str, args: dict | None, reason: str) 
         if t.scope == "act":
             caller.acted = True
             memory.act_record(caller.thread_id, name, h)
+            _route(res, caller.thread_id)
         if t.untrusted_output:
             caller.untrusted = True  # taint is derived, not declared
         return res
@@ -165,6 +172,7 @@ async def decide(aid: str, approve: bool, decided_by: str) -> dict:
         db.audit(decided_by, a["tool"], a["payload_hash"], "approved_ok", aid)
         _thread_log(a.get("thread_id"), f"{a['tool']} was approved by the user and ran (approval {aid})")
         memory.act_record(a.get("thread_id"), a["tool"], a["payload_hash"], aid)
+        _route(res, a.get("thread_id"))
         return {"status": "done", "result": res}
     except Exception as e:
         db.x("UPDATE approvals SET status='failed', result=? WHERE id=?", repr(e)[:2000], aid)

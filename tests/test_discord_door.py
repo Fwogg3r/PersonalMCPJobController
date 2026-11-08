@@ -62,6 +62,44 @@ async def test_ignores_strangers_bots_and_other_channels(door):
     assert [c for c in door.api.calls if c[0] != "GET"] == [] and door.prompts == []
 
 
+async def test_stranger_dm_is_forwarded_to_owner_not_run(door):
+    import asyncio
+    m = msg("hey @everyone\nsee you at 6", author=STRANGER, channel="dm2", guild=None)
+    m["author"].update(username="alex", global_name="Alex")
+    await door.on_message(m)
+    await asyncio.gather(*door._tasks)
+    assert door.prompts == []
+    assert ("POST", "/users/@me/channels", {"recipient_id": OWNER}) in door.api.calls
+    (path, body), = door.api.sent()
+    assert path != "/channels/dm2/messages" and body["allowed_mentions"] == {"parse": []}
+    assert body["content"] == f"**DM from Alex** (@alex, id {STRANGER})\n> hey @everyone\n> see you at 6"
+
+
+async def test_reply_lands_in_the_thread_that_sent_the_dm(door):
+    import asyncio
+    from pmjc import ask, executor, memory
+    tid = memory.thread_new("plans with alex")
+    executor._route({"id": "x", "reply_route": f"discord:{STRANGER}"}, tid)  # what a discord_dm in that thread leaves
+    m = msg("sure, 6 works", author=STRANGER, channel="dm2", guild=None)
+    m["author"].update(username="alex")
+    await door.on_message(m)
+    await asyncio.gather(*door._tasks)
+    assert door.prompts == []
+    (_, body), = door.api.sent()
+    assert body["content"].startswith(f"**DM from alex** (@alex, id {STRANGER}) re: plans with alex\n> sure, 6 works")
+    past, tainted = ask.history(tid, 3)
+    assert "sure, 6 works" in past and "third-party content" in past and tainted
+    m2 = msg("bringing snacks", author=STRANGER, channel="dm2", guild=None, mid="m9")
+    m2["author"].update(username="alex")
+    await door.on_message(m2)  # a reply can span several messages: the route stays, each one lands in the thread
+    await asyncio.gather(*door._tasks)
+    assert len(door.api.sent()) == 2 and "bringing snacks" in ask.history(tid, 3)[0]
+    assert not [c for c in door.api.calls if c[0] == "GET" and "/messages" in c[1]]  # older DM history never fetched
+    door.cfg.forward_dms = False
+    await door.on_message(m)
+    assert len(door.api.sent()) == 2
+
+
 async def test_channel_message_starts_thread_and_replies_continue_it(door):
     from pmjc import memory
     await door.on_message(msg("what's the weather"))

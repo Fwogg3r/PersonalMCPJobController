@@ -72,7 +72,7 @@ class Discord(Connector):
         channel, uid = await self._dm_channel(user_id, contact)
         m = await self._api("POST", f"/channels/{channel}/messages",
                             json={"content": content[:2000], "allowed_mentions": {"parse": []}})
-        return {"id": m["id"], "dm_channel_id": channel, "user_id": uid}
+        return {"id": m["id"], "dm_channel_id": channel, "user_id": uid, "reply_route": f"discord:{uid}"}
 
     @tool(scope="read", untrusted_output=True)
     async def discord_dm_read(self, user_id: str | None = None, contact: str | None = None, limit: int = 30) -> list[dict]:
