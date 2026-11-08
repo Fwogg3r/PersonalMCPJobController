@@ -11,7 +11,7 @@ import logging
 import os
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
@@ -41,6 +41,7 @@ class Result:
     provider: str
     cost_usd: float = 0.0
     turns: int = 0
+    fell_back: list[str] = field(default_factory=list)  # providers tried before this one, with the reason
 
 
 def _clip(o) -> str:
@@ -77,10 +78,12 @@ async def run(prompt: str, caller: Caller, tools: list[ToolSpec], need: router.N
                         raise RuntimeError(f"{p.id} returned invalid JSON after acting")
                     tried.append(f"{p.id}: invalid JSON")
                     continue  # quality failure: escalate
+            res.fell_back = [t for t in tried if not t.endswith(": unavailable")]
             return res
         except Exception as e:
             router.mark_failed(p)
             tried.append(f"{p.id}: {type(e).__name__}: {creds.Redactor.scrub(str(e))[:200]}")
+            log.warning("provider %s failed, trying the next one: %s", p.id, tried[-1])
             if caller.acted:
                 raise
     raise NoProvider("no provider could run this: " + "; ".join(tried or ["none configured or all filtered out"]))

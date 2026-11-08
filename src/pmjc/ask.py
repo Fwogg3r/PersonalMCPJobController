@@ -96,4 +96,4 @@ async def ask(caller: Caller, text: str, private: bool = False, provider_order: 
     record(text, res.text, res.provider, caller.name)
     memory.thread_add(thread_id, "answer", res.text, author=res.provider, trust=memory.trust_of(caller))
     return {"answer": res.text, "provider": res.provider, "watches": watches, "thread_id": thread_id,
-            "cost_usd": round(res.cost_usd, 5)}
+            "cost_usd": round(res.cost_usd, 5), "fell_back": res.fell_back}

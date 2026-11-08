@@ -296,3 +296,22 @@ async def test_new_notify_switch_friend_and_registration(door):
     assert memory.contact_get("Sam")["handles"]["discord_user_id"] == "42"
     await door.on_interaction(cmd("pmjc", sub("friend", "list"), iid="c5"))
     assert "Sam" in patched(door)[-1]["content"]
+
+
+async def test_run_log_posted_to_log_channel(door, caplog):
+    import asyncio
+    import logging
+    caplog.set_level(logging.INFO, logger="pmjc")
+    door.cfg.log_channel_id = "777"
+    await door.on_message(msg("hello there", channel="dm1", guild=None))
+    await asyncio.sleep(0.05)  # the log post is spawned
+    logs = door.api.sent("777")
+    assert logs, "nothing posted to the log channel"
+    text = "\n".join(b["content"] for _, b in logs)
+    assert "hello there" in text and "answered in" in text and "fake-model" in text
+    assert all(len(b["content"]) <= 2000 for _, b in logs)
+    door.cfg.log_channel_id = ""
+    n = len(door.api.calls)
+    await door.on_message(msg("again", channel="dm1", guild=None))
+    await asyncio.sleep(0.05)
+    assert not [c for c in door.api.calls[n:] if c[1] == "/channels/777/messages"]

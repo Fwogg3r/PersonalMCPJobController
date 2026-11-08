@@ -429,11 +429,17 @@ def door_setup(owner: list[str] = typer.Option(None, "--owner", help="Your numer
                enable: bool = typer.Option(True, "--enable/--disable"),
                private: Optional[bool] = typer.Option(None, "--private/--no-private",
                                                       help="Keep these conversations on local models."),
-               scopes: Optional[str] = typer.Option(None, help="Comma-separated, default sources,jobs,actions.")):
+               scopes: Optional[str] = typer.Option(None, help="Comma-separated, default sources,jobs,actions."),
+               log_channel: Optional[str] = typer.Option(None, "--log-channel",
+                                                         help="Channel id that gets each run's log lines ('' to stop).")):
     """Chat with pmjc through your Discord bot. Restart the service afterwards."""
     from . import config, discord_door
     s = config.load()
     d = s.discord_door
+    if log_channel is not None:
+        if log_channel and not log_channel.isdigit():
+            raise typer.BadParameter(f"{log_channel!r} isn't a numeric Discord channel id")
+        d.log_channel_id = log_channel
     for v in (owner or []) + (channel or []):
         if not v.isdigit():
             raise typer.BadParameter(f"{v!r} isn't a numeric Discord id (turn on Developer Mode, then right-click and Copy ID)")

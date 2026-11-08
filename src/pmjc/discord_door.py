@@ -16,12 +16,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import json
 import logging
 import random
 import time
 
-from . import agent, config, db, executor, memory, registry
+from . import agent, config, creds, db, executor, memory, registry
 from .auth import Caller
 
 log = logging.getLogger("pmjc.discord_door")
@@ -41,6 +42,29 @@ FRIENDS_NOTE = ("You are talking to your owner through Discord. To message someo
                 "owner approves each one.")
 
 _door: Door | None = None
+
+# ---- per-run log capture (posted to discord_door.log_channel_id) -----------------------------------------
+_RUN_LOG: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar("pmjc_door_run_log", default=None)
+
+
+class _RunLogHandler(logging.Handler):
+    """Collects pmjc log lines emitted while a door run is active (tasks it starts inherit the context)."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        buf = _RUN_LOG.get()
+        if buf is not None and len(buf) < 400:
+            with contextlib.suppress(Exception):
+                buf.append(creds.Redactor.scrub(self.format(record)))
+
+
+_handler = _RunLogHandler(logging.INFO)
+_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s", "%H:%M:%S"))
+
+
+def _install_handler() -> None:
+    lg = logging.getLogger("pmjc")  # pmjc's own loggers only: httpx lines would carry interaction tokens in URLs
+    if _handler not in lg.handlers:
+        lg.addHandler(_handler)
 
 
 def running() -> Door | None:
@@ -84,6 +108,7 @@ class Door:
         self.connected = False
         self._locks: dict[str, asyncio.Lock] = {}
         self._tasks: set[asyncio.Task] = set()
+        _install_handler()
         self.app_id = ""
         self.parents: dict[str, str] = {}  # thread id -> parent channel id
         self.guilds: dict[str, str] = {}  # channel id -> guild id
@@ -174,7 +199,7 @@ class Door:
             return  # a channel or thread the door doesn't own
         lock = self._locks.setdefault(ch, asyncio.Lock())
         async with lock:  # one run at a time per conversation, in order
-            await self._handle(m, ch, is_dm, text, author["id"])
+            await self.logged(f"message in <#{ch}>: {text[:200]}", self._handle(m, ch, is_dm, text, author["id"]))
 
     async def _handle(self, m: dict, ch: str, is_dm: bool, text: str, user_id: str) -> None:
         tid = self.thread_for(ch)
@@ -190,8 +215,8 @@ class Door:
             reply_ch = t["id"]
         caller = Caller(f"discord:{user_id}", "remote", set(self.cfg.scopes))
         prefs = self.prefs(reply_ch)
-        if prefs.get("trace", self.cfg.trace):
-            caller.on_tool = lambda name, args, status: self._trace(reply_ch, name, args, status)
+        trace = bool(prefs.get("trace", self.cfg.trace))
+        caller.on_tool = lambda name, args, status: self._on_tool(reply_ch, trace, name, args, status)
         started = time.time()
         typing = asyncio.create_task(self._typing(reply_ch))
         try:
@@ -200,6 +225,7 @@ class Door:
                                     history_turns=self.cfg.history_turns, extra_system=FRIENDS_NOTE,
                                     provider_order=[prefs["provider"]] if prefs.get("provider") else None)
         except agent.NoProvider as e:
+            log.warning("no provider: %s", e)
             await self.send(reply_ch, f"No model is available right now: {e}")
             return
         except Exception as e:
@@ -210,16 +236,50 @@ class Door:
             typing.cancel()
         if tid is None:
             self.bind(reply_ch, res["thread_id"])
+        log.info("answered in <#%s> by %s (pmjc thread %s, %.1fs, $%.4f)%s", reply_ch, res["provider"], res["thread_id"],
+                 time.time() - started, res.get("cost_usd") or 0,
+                 "".join(f"; fell back from {f}" for f in res.get("fell_back") or []))
         footer = f"\n-# {res['provider']}"
         if res.get("watches"):
             footer += f" · watching ({', '.join(res['watches'])})"
         if res.get("cost_usd"):
             footer += f" · ${res['cost_usd']:.4f}"
+        for f in res.get("fell_back") or []:
+            footer += f"\n-# fell back from {f[:150]}"
         for part in chunks(res["answer"] + footer):
             await self.send(reply_ch, part)
         for a in db.q("SELECT id, tool, args, reason FROM approvals WHERE thread_id=? AND status='pending' AND created>=?",
                       res["thread_id"], started - 1):
             await self.send(reply_ch, approval_text(a), components=approval_buttons(a["id"]))
+
+    async def _on_tool(self, channel_id: str, trace: bool, name: str, args: dict, status: str) -> None:
+        from .discord_commands import clip
+        log.info("tool %s(%s) -> %s", name, clip(json.dumps(args, default=str), 300) if args else "", status)
+        if trace:
+            await self._trace(channel_id, name, args, status)
+
+    async def logged(self, title: str, coro):
+        """Run `coro` and post everything pmjc logged during it to the log channel (if one is set)."""
+        buf: list[str] = []
+        token = _RUN_LOG.set(buf)
+        t0, error = time.time(), None
+        try:
+            return await coro
+        except Exception as e:
+            error = e
+            raise
+        finally:
+            _RUN_LOG.reset(token)
+            if self.cfg.log_channel_id:
+                self.spawn(self._post_log(title, buf, time.time() - t0, error))
+
+    async def _post_log(self, title: str, lines: list[str], secs: float, error: Exception | None) -> None:
+        head = f"**{creds.Redactor.scrub(title)[:300]}** · {secs:.1f}s" + (f" · **{type(error).__name__}**" if error else "")
+        body = "\n".join(lines) or "(nothing logged)"
+        parts = chunks(body, MAX_MSG - 400)
+        with contextlib.suppress(Exception):
+            for n, part in enumerate(parts):
+                await self.send(self.cfg.log_channel_id, (head + "\n" if n == 0 else "") + "```\n" + part.replace("```", "'''") + "\n```")
 
     async def _trace(self, channel_id: str, name: str, args: dict, status: str) -> None:
         from .discord_commands import clip
@@ -227,7 +287,18 @@ class Door:
         await self.send(channel_id, f"-# tool {name}({shown}) -> {status}")
 
     async def on_interaction(self, i: dict) -> None:
-        if i.get("type") in (2, 4):  # slash command / autocomplete
+        if i.get("type") == 4:  # autocomplete: too chatty to log
+            await self.commands.handle(i)
+            return
+        if i.get("type") in (2, 3):
+            data = i.get("data") or {}
+            await self.logged(f"{'/' + data.get('name', '') if i['type'] == 2 else 'button ' + data.get('custom_id', '')}"
+                              f" in <#{i.get('channel_id', '')}>", self._interaction(i))
+            return
+
+    async def _interaction(self, i: dict) -> None:
+        if i.get("type") == 2:  # slash command
+            log.info("slash command %s", json.dumps((i.get("data") or {}).get("options") or [], default=str)[:500])
             await self.commands.handle(i)
             return
         if i.get("type") != 3:  # message component (button)

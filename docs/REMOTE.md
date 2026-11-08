@@ -112,6 +112,7 @@ How it works:
 - **Who it answers.** Only the owner ids you set. pmjc never reads anyone else's messages, even in the same channel.
 - **Approvals.** Act tools need approval, as they do for every remote caller. The bot posts Approve/Deny buttons in the conversation, and only an owner's click counts. While the door is connected, other approval notifications sent to Discord use buttons too, so they need no public URL.
 - **Models.** Requests go through the normal routing: local first, then `claude -p`, then paid APIs if you enabled them. The reply footer names the model that answered.
+- **Run log.** With `--log-channel <channel id>` (or `discord_door.log_channel_id`), every message, slash command and button click posts its pmjc log lines there: the request, tool calls (names and arguments, never results), the provider that answered and any provider it fell back from, with known secrets scrubbed. Replies also end with a `fell back from ...` line when the first choice failed.
 - **Status:** `pmjc discord-door status` shows the settings and anything missing. Whether the bot is connected: `GET /api/discord-door` with an admin token, or the service log.
 
 Trust: anyone who controls your Discord account can use pmjc with the scopes you gave the door (default `sources,jobs,actions`; actions still need a button click). Turn on Discord two-factor sign-in, or narrow the door with `--scopes sources,jobs`.
