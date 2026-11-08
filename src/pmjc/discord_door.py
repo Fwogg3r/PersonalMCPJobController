@@ -159,6 +159,8 @@ class Door:
         author = m.get("author") or {}
         if author.get("bot") or not self.is_owner(author.get("id")):
             return  # never read anyone else's messages
+        if m.get("type", 0) not in (0, 19):
+            return  # system messages (e.g. "started a thread") are not requests
         text = (m.get("content") or "").strip()
         attachments = [a.get("url") for a in m.get("attachments", []) if a.get("url")]
         if attachments:
