@@ -23,7 +23,8 @@ How to handle the user's request:
 
 WATCH_TOOLS = {"pmjc_connectors", "pmjc_watch_start", "pmjc_watch_status", "pmjc_watch_cancel", "pmjc_watch_list",
                "pmjc_job_create", "pmjc_jobs_list", "pmjc_context", "pmjc_capabilities", "pmjc_threads_recent",
-               "pmjc_thread_get", "pmjc_thread_note", "pmjc_memory_get", "pmjc_memory_search", "pmjc_contact_find"}
+               "pmjc_thread_get", "pmjc_thread_note", "pmjc_thread_start", "pmjc_memory_get", "pmjc_memory_search",
+               "pmjc_contact_find", "pmjc_contact_set", "pmjc_memory_set"}
 DDL = "CREATE TABLE IF NOT EXISTS asks (id INTEGER PRIMARY KEY, text TEXT, norm TEXT, ts REAL, answer TEXT, provider TEXT, caller TEXT)"
 
 

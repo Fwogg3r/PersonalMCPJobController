@@ -426,3 +426,19 @@ def test_context_endpoints_are_admin_only_and_work(home):
     assert c.get(f"/api/context/threads/{tid}", headers=adm).json()["id"] == tid
     assert c.post(f"/api/context/threads/{tid}/close", headers=adm).json()["status"] == "closed"
     assert c.delete("/api/context/notes/k", headers=adm).json()["deleted"]
+
+
+async def test_ask_offers_writer_tools(home, monkeypatch):
+    from pmjc import agent as agent_mod, ask as ask_mod, memory
+    from pmjc import db, watches
+    db.x(watches.DDL)
+    memory.ensure_model_md()
+    seen = {}
+
+    async def fake_run(prompt, caller, tools, need, system=None, **kw):
+        seen["tools"] = {t.name for t in tools}
+        return agent_mod.Result("ok", "fake", 0.0)
+    monkeypatch.setattr(agent_mod, "run", fake_run)
+    await ask_mod.ask(agent(), "add id 123 to Anti's contact card")
+    assert {"pmjc_contact_set", "pmjc_memory_set", "pmjc_contact_find"} <= seen["tools"]
+    assert "pmjc_memory_delete" not in seen["tools"] and "pmjc_job_delete" not in seen["tools"]
