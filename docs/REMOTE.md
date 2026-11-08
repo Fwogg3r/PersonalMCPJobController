@@ -23,15 +23,22 @@ uv run pmjc remote https://pmjc.example.com --allow you@example.com --scopes sou
 This sets `public_url` and `allowed_hosts` and turns on OAuth for that one identity. Every other account is refused. Act tools still need approval, whatever the scopes.
 
 ## 3. OAuth client (for the Claude apps)
-1. In Google Cloud console → APIs & Services → Credentials → Create credentials → OAuth client ID, choose type **Web application**.
-2. Add the authorized redirect URI `https://pmjc.example.com/auth/callback`.
-3. Store the client in pmjc, either on the dashboard (Routing → Provider keys → `oauth.client_id` and `oauth.client_secret`) or with:
+1. **Sign in to Google Cloud console with the account you allowed in step 2.** If you have several Google accounts, check the avatar in the top right; a project made under another account works but can't use the Internal audience.
+2. **Create a project** (e.g. `pmjc`). With a Google Workspace account, pick your organization.
+3. **Configure the sign-in screen** (Google Auth Platform → Get started):
+   - App name `pmjc`, support email and contact email: your address.
+   - Audience: **Internal** if you have Workspace (only your organization's accounts can sign in, and no Google review is needed). With a personal Gmail account choose External, leave it in Testing and add yourself as a test user.
+   - Agree to the Google API Services User Data Policy and create.
+4. **Create the client** (Clients → Create client): type **Web application**, any name, authorized redirect URI `https://pmjc.example.com/auth/callback`. No JavaScript origins.
+5. **Copy the client ID and secret** from the dialog (or Download JSON). The secret is only shown once; you can add a new one on the client's page later.
+6. **Store them in pmjc** on the machine and Windows account that runs the service, either on the dashboard (Routing → Provider keys → `oauth.client_id` and `oauth.client_secret`) or with:
    ```bash
    uv run pmjc auth secret oauth.client_id
    uv run pmjc auth secret oauth.client_secret
    ```
-4. Restart the service: `schtasks /End /TN pmjc` then `schtasks /Run /TN pmjc`. On other systems, restart the service your own way.
-5. In the Claude app, go to Settings → Connectors → Add custom connector and enter URL `https://pmjc.example.com/mcp`. Sign in with the allowed Google account once; the connector keeps a refresh token.
+   The prompt hides what you type, so a paste can silently arrive empty. In a Windows terminal, paste with a right-click. `pmjc auth list` shows what's stored.
+7. **Restart the service:** `schtasks /End /TN pmjc` then `schtasks /Run /TN pmjc`. On other systems, restart the service your own way. The log says `oauth.enabled but ... missing` if the client didn't get stored. Check that `https://pmjc.example.com/.well-known/oauth-authorization-server` now returns JSON.
+8. **Add the connector** in claude.ai: Customize → Connectors → Add connector → Add custom connector. Name `pmjc`, URL `https://pmjc.example.com/mcp`, keep the default authentication (sign in, dynamic client registration). Then click **Connect** and sign in with the allowed account. The connector then works in the Claude web, desktop and mobile apps. New Google clients can take a few minutes before sign-in works.
 
 Until steps 3 and 4 are done, `/mcp` accepts pmjc tokens only.
 
@@ -60,17 +67,28 @@ To keep `/api/*` off the open internet, put it behind WARP. Route the hostname t
 The Discord front door lets you talk to pmjc from the Discord app on any device. The service keeps an outbound connection to Discord, so this works without a tunnel or `public_url`.
 
 1. **Make a server** just for you (Discord → "+" → Create My Own). Add a text channel such as `#pmjc`. A second channel such as `#pmjc-alerts` can take job and watch results.
-2. **Make the bot** at <https://discord.com/developers/applications> → New Application → Bot:
-   - Reset the token and copy it.
-   - Turn on **Message Content Intent** under Privileged Gateway Intents.
-   - Under OAuth2 → URL Generator, tick `bot`, then the permissions *View Channels*, *Send Messages*, *Send Messages in Threads*, *Create Public Threads*, *Manage Threads* (for `/pmjc close` and `delete`) and *Read Message History*. Also tick the `applications.commands` scope so the slash commands appear. Open the URL and add the bot to your server.
-3. **Store the token:** `pmjc auth set discord` (or the dashboard). Set `notify_channel_id` to the alerts channel if you want results there, and add `discord` to `notify_channels` in `settings.yaml`.
-4. **Get the ids:** Discord Settings → Advanced → Developer Mode on. Then right-click yourself → Copy User ID, and right-click `#pmjc` → Copy Channel ID.
-5. **Turn it on and restart the service:**
+2. **Make the bot** at <https://discord.com/developers/applications> → New Application (the name is the bot's display name). Discord may show a CAPTCHA. Then on the **Bot** page:
+   - Turn on **Message Content Intent** under Privileged Gateway Intents and save. The other two intents aren't needed.
+   - Optional: turn off **Public Bot** so only you can add it. If Discord refuses, first set Installation → Install Link to None. The door ignores everyone but you either way.
+   - **Reset Token** and copy it (it's shown once).
+3. **Add the bot to your server.** Open this URL with your application id (General Information → Application ID) and server id filled in, and authorize:
    ```
-   pmjc discord-door setup --owner <your user id> --channel <#pmjc channel id>
+   https://discord.com/oauth2/authorize?client_id=<application id>&scope=bot%20applications.commands&permissions=326417583104&guild_id=<server id>
    ```
-   Add `--private` to keep these conversations on local models.
+   The permissions number is View Channels, Send Messages, Read Message History, Create Public Threads, Send Messages in Threads and Manage Threads. On a PC the link may hand off to the Discord desktop app; authorizing there or on a phone works too.
+4. **Get the ids:** Discord Settings → Advanced → Developer Mode on. Then right-click (long-press on a phone) yourself → Copy User ID, and each channel → Copy Channel ID.
+5. **Store the token** on the machine and account that runs the service:
+   ```bash
+   uv run pmjc auth set discord
+   ```
+   It also asks for `notify_channel_id`: give the alerts channel's **numeric id**, not its `#name`, or leave it blank and run `/pmjc notify here` in that channel later. Put `discord` in `notify_channels` in `settings.yaml` (`/pmjc notify here` does both).
+6. **Turn it on and restart the service:**
+   ```bash
+   uv run pmjc discord-door setup --owner <your user id> --channel <#pmjc channel id>
+   ```
+   Add `--private` to keep these conversations on local models. To give the control command another name than `/pmjc`, set `discord_door.command_name` in `settings.yaml`.
+7. **Check it:** the service log shows `discord door connected as <bot>` and `commands registered`. In Discord, `/pmjc status` lists the door and which models are up.
+8. **Give it a model.** If `/pmjc status` shows every provider down, either let pmjc start your local model (`/pmjc switch auto_start_local on`; pmjc then runs LM Studio's `lms server start` and loads a model when needed) or connect `claude -p`: run `claude setup-token`, sign in, and store the printed token with `uv run pmjc auth secret claude.oauth_token`. Don't put that token in an environment variable, where Claude Code would pick it up as well.
 
 How it works:
 - **Conversations.** Each message in `#pmjc` starts a Discord thread and a pmjc thread. Reply in that Discord thread to continue; the last few exchanges go back to the model. DMs to the bot work too, one conversation per DM until you send `new`.
