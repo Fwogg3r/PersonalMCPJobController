@@ -132,6 +132,11 @@ def thread_new(title: str, by: str = "", private: bool = False, status: str = "o
     return tid
 
 
+def thread_set_title(tid: str, title: str) -> None:
+    _init()
+    db.x("UPDATE threads SET title=? WHERE id=?", title[:200], tid)
+
+
 def thread_exists(tid: str | None) -> bool:
     _init()
     return bool(tid) and bool(db.q("SELECT 1 FROM threads WHERE id=?", tid))

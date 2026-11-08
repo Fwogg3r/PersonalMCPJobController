@@ -10,3 +10,7 @@ v2: threads under door channels (any thread whose parent is a door channel binds
 Verified live (2026-11-07): gateway connects, guild commands register, a thread created in the Discord UI is answered, `/pmjc status` works. Fixed after the live run: system messages (e.g. "started a thread" notices) are ignored. Setup steps written up in docs/REMOTE.md sections 3 and 6, including the Google OAuth client and the claude.ai connector, which were also verified end to end.
 
 Added after the live run: provider fallbacks are logged and shown in the reply footer, and a per-run log channel (`discord_door.log_channel_id`, `discord-door setup --log-channel`) that gets each run's pmjc log lines.
+
+Thread auto-titles: after the first answer, threads the door started are renamed to a short topic by the answering provider (`discord_door.auto_title`).
+
+Local model fix: LM Studio JIT-loaded qwen with an 8K context and the door request (36 tools) is ~9.3K tokens, so it 400d and fell back to claude -p. `lms load` now passes `--context-length` from `context_tokens`, and HTTP errors from OpenAI-compatible providers keep the server's reason.

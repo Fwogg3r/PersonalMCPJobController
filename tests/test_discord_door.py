@@ -315,3 +315,19 @@ async def test_run_log_posted_to_log_channel(door, caplog):
     await door.on_message(msg("again", channel="dm1", guild=None))
     await asyncio.sleep(0.05)
     assert not [c for c in door.api.calls[n:] if c[1] == "/channels/777/messages"]
+
+
+async def test_new_thread_is_renamed_after_first_answer(door):
+    import asyncio
+    from pmjc import memory
+    await door.on_message(msg("what's the weather like tomorrow in town"))
+    await asyncio.sleep(0.05)  # the rename is spawned
+    patches = [(p, b) for m, p, b in door.api.calls if m == "PATCH" and p == "/channels/thr1"]
+    assert patches and patches[0][1]["name"] == "answer 2"  # the fake model's second call is the title
+    assert memory.thread_get(door.thread_for("thr1"))["title"] == "answer 2"
+    await door.on_message(msg("and the day after?", channel="thr1"))
+    await asyncio.sleep(0.05)
+    assert len([1 for m, p, _ in door.api.calls if m == "PATCH" and p == "/channels/thr1"]) == 1  # only once
+    await door.on_message(msg("hi", channel="dm5", guild=None))
+    await asyncio.sleep(0.05)
+    assert not [1 for m, p, _ in door.api.calls if m == "PATCH" and p == "/channels/dm5"]  # DMs have no name

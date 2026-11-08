@@ -22,7 +22,7 @@ import logging
 import random
 import time
 
-from . import agent, config, creds, db, executor, memory, registry
+from . import agent, config, creds, db, executor, memory, registry, router
 from .auth import Caller
 
 log = logging.getLogger("pmjc.discord_door")
@@ -204,6 +204,7 @@ class Door:
     async def _handle(self, m: dict, ch: str, is_dm: bool, text: str, user_id: str) -> None:
         tid = self.thread_for(ch)
         reply_ch = ch
+        new_thread = False
         if is_dm and text.lower() in NEW_WORDS:
             self.unbind(ch)
             await self.send(ch, "Started a new conversation.")
@@ -213,6 +214,7 @@ class Door:
             t = await self.api("POST", f"/channels/{ch}/messages/{m['id']}/threads",
                                {"name": name, "auto_archive_duration": 1440})
             reply_ch = t["id"]
+            new_thread = True
         caller = Caller(f"discord:{user_id}", "remote", set(self.cfg.scopes))
         prefs = self.prefs(reply_ch)
         trace = bool(prefs.get("trace", self.cfg.trace))
@@ -236,6 +238,8 @@ class Door:
             typing.cancel()
         if tid is None:
             self.bind(reply_ch, res["thread_id"])
+            if new_thread and self.cfg.auto_title:
+                self.spawn(self._retitle(reply_ch, res["thread_id"], text, res["answer"], res["provider"]))
         log.info("answered in <#%s> by %s (pmjc thread %s, %.1fs, $%.4f)%s", reply_ch, res["provider"], res["thread_id"],
                  time.time() - started, res.get("cost_usd") or 0,
                  "".join(f"; fell back from {f}" for f in res.get("fell_back") or []))
@@ -251,6 +255,24 @@ class Door:
         for a in db.q("SELECT id, tool, args, reason FROM approvals WHERE thread_id=? AND status='pending' AND created>=?",
                       res["thread_id"], started - 1):
             await self.send(reply_ch, approval_text(a), components=approval_buttons(a["id"]))
+
+    async def _retitle(self, channel_id: str, thread_id: str, request: str, answer: str, provider: str) -> None:
+        """Rename a thread the door started (named after the raw message) to a short topic, like chat apps do.
+        Uses the provider that just answered, without tools; failures keep the old name."""
+        prompt = ("Write a title of 2 to 6 words for this conversation. Reply with the title only: no quotes, "
+                  "no trailing punctuation.\n\nUser: " + request[:1500] + "\n\nAssistant: " + answer[:1500])
+        try:
+            res = await agent.run(prompt, Caller("discord:title", "remote", set()), [],
+                                  router.Need(order=[provider], capabilities=set()), system="You name conversations.",
+                                  max_turns=1)
+            title = " ".join(res.text.strip().strip('"\'`*#').split())[:90]
+            if not title or "\n" in res.text.strip():
+                return
+            await self.api("PATCH", f"/channels/{channel_id}", {"name": title})
+            memory.thread_set_title(thread_id, title)
+            log.info("thread <#%s> renamed to %r", channel_id, title)
+        except Exception as e:
+            log.info("thread rename skipped: %s", type(e).__name__)
 
     async def _on_tool(self, channel_id: str, trace: bool, name: str, args: dict, status: str) -> None:
         from .discord_commands import clip

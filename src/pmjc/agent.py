@@ -109,7 +109,8 @@ async def _openai(p: ProviderConfig, prompt, caller, tools, system, max_turns) -
             if schema:
                 body["tools"] = schema
             r = await c.post(p.base_url.rstrip("/") + "/chat/completions", json=body, headers=headers)
-            r.raise_for_status()
+            if r.status_code >= 400:  # keep the server's reason (e.g. "exceeds the available context size")
+                raise RuntimeError(f"HTTP {r.status_code} from {p.id}: {r.text[:400]}")
             data = r.json()
             u = data.get("usage") or {}
             if p.trust != "local":

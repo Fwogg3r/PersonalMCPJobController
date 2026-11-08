@@ -92,6 +92,7 @@ class DiscordDoorConfig(BaseModel):
     history_turns: int = 6  # earlier request/answer pairs passed back to the model
     private: bool = False  # keep these conversations on local models
     command_name: str = "pmjc"  # the control slash command (/pmjc); rename to taste
+    auto_title: bool = True  # rename threads the door starts to a short topic after the first answer
     log_channel_id: str = ""  # every door run's pmjc log lines are posted here
     trace: bool = False  # post one line per tool call in the conversation (per-thread override: /pmjc trace)
 
