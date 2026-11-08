@@ -369,3 +369,18 @@ async def test_new_thread_is_renamed_after_first_answer(door):
     await door.on_message(msg("hi", channel="dm5", guild=None))
     await asyncio.sleep(0.05)
     assert not [1 for m, p, _ in door.api.calls if m == "PATCH" and p == "/channels/dm5"]  # DMs have no name
+
+
+async def test_approval_result_continues_the_conversation(door):
+    import asyncio
+    await door.on_message(msg("please send it", channel="dm1", guild=None))
+    with_buttons = [b for _, b in door.api.sent("dm1") if b.get("components")]
+    approve_id = with_buttons[0]["components"][0]["components"][0]["custom_id"]
+    inter = {"id": "i2", "token": "tok", "type": 3, "application_id": "999", "data": {"custom_id": approve_id},
+             "message": {"content": with_buttons[0]["content"]}, "channel_id": "dm1",
+             "member": {"user": {"id": OWNER}}}
+    before = len(door.prompts)
+    await door.on_interaction(inter)
+    await asyncio.gather(*list(door._tasks))
+    assert len(door.prompts) == before + 1
+    assert "[approval result]" in door.prompts[-1] and "fake_send" in door.prompts[-1]

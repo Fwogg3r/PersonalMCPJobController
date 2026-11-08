@@ -19,7 +19,10 @@ How to handle the user's request:
    one or two lines, what you're watching for, how long, and that the answer will be sent to them when it fires.
 4. Never start more than one watch per request, and never poll faster than needed.
 5. If the user asks for something to happen regularly ("every morning", "each hour"), create a job with
-   pmjc_job_create instead of a watch."""
+   pmjc_job_create instead of a watch.
+6. If a tool returns an error, try one fix (different arguments or another tool that fits). If that also fails,
+   tell the user plainly what failed, quote the error, and ask how to proceed. Never claim something worked
+   when it didn't."""
 
 WATCH_TOOLS = {"pmjc_connectors", "pmjc_watch_start", "pmjc_watch_status", "pmjc_watch_cancel", "pmjc_watch_list",
                "pmjc_job_create", "pmjc_jobs_list", "pmjc_context", "pmjc_capabilities", "pmjc_threads_recent",
@@ -31,6 +34,19 @@ DDL = "CREATE TABLE IF NOT EXISTS asks (id INTEGER PRIMARY KEY, text TEXT, norm 
 def normalize(text: str) -> str:
     import re
     return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", "", text.lower())).strip()
+
+
+def outcome_text(tool: str, status: str, detail: str = "") -> str:
+    """The message fed back into a conversation after the owner decides an approval."""
+    detail = (detail or "")[:500]
+    if status == "done":
+        what = f"The user approved {tool} and it ran." + (f" Result: {detail}" if detail else "")
+    elif status == "denied":
+        what = f"The user denied {tool}. Don't try it again unless the user asks."
+    else:
+        what = f"The user approved {tool} but it failed: {detail or status}"
+    return (f"[approval result] {what}\nTell the user the outcome in one or two lines. If it failed, try one fix "
+            "or ask the user what to do, quoting the error.")
 
 
 def record(text: str, answer: str, provider: str, caller: str) -> None:

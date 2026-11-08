@@ -344,6 +344,8 @@ class Door:
             await self._delete_choice(i, cb, kind == "del", aid)
             return
         await self.api("POST", cb, {"type": 6})  # acknowledge within 3 s; the tool may take longer
+        row = db.q("SELECT tool FROM approvals WHERE id=?", aid)
+        tool_name = row[0]["tool"] if row else "the action"
         res = await executor.decide(aid, kind == "a", f"discord:{user['id']}")
         status = res.get("status", "?")
         detail = ""
@@ -356,6 +358,17 @@ class Door:
         app_id = i.get("application_id") or self.bot_id
         await self.api("PATCH", f"/webhooks/{app_id}/{i['token']}/messages/@original",
                        {"content": body[:MAX_MSG], "components": [], "allowed_mentions": {"parse": []}})
+        ch = i.get("channel_id")
+        if ch and status in ("done", "denied", "failed") and self.thread_for(ch) is not None:
+            from . import ask as ask_mod
+            text = ask_mod.outcome_text(tool_name, status, detail)
+            self.spawn(self._continue(ch, not i.get("guild_id"), text, user["id"]))
+
+    async def _continue(self, ch: str, is_dm: bool, text: str, user_id: str) -> None:
+        """Feed an approval outcome back into the conversation in channel ch, as the next turn."""
+        lock = self._locks.setdefault(ch, asyncio.Lock())
+        async with lock:
+            await self.logged(f"approval result in <#{ch}>", self._handle({}, ch, is_dm, text, user_id))
 
     async def _delete_choice(self, i: dict, cb: str, confirm: bool, channel_id: str) -> None:
         if not confirm:
