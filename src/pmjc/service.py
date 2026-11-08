@@ -155,6 +155,44 @@ def _keep_awake() -> None:
         ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
 
 
+def _die_with_children() -> object | None:
+    """Windows: put this process in a job object that kills every process in it when the last handle closes, i.e.
+    when the supervisor exits or is killed (schtasks /End). Children inherit the job, so the server can't outlive
+    the supervisor and keep the port (a restart would then fail with 'address in use'). systemd/launchd already
+    stop the whole process group. Returns the job handle, which must stay referenced."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    class Basic(ctypes.Structure):
+        _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                    ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                    ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                    ("SchedulingClass", wintypes.DWORD)]
+
+    class Extended(ctypes.Structure):
+        _fields_ = [("BasicLimitInformation", Basic), ("IoInfo", ctypes.c_ulonglong * 6),
+                    ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                    ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateJobObjectW.restype = wintypes.HANDLE
+    k32.GetCurrentProcess.restype = wintypes.HANDLE
+    k32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+    k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    job = k32.CreateJobObjectW(None, None)
+    info = Extended()
+    info.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    if not job or not k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)) \
+            or not k32.AssignProcessToJobObject(job, k32.GetCurrentProcess()):
+        log.warning("could not set up the kill-on-exit job (error %s); a stopped service may leave the server "
+                    "running", ctypes.get_last_error())
+        return None
+    return job
+
+
 def supervise() -> None:
     """Run the server as a child process and restart it when it exits (with backoff)."""
     lock = _single_instance()
@@ -162,6 +200,7 @@ def supervise() -> None:
     if lock is None:
         log.info("another pmjc supervisor is running; exiting")
         return
+    _job = _die_with_children()  # noqa: F841  (kept alive for the supervisor's lifetime)
     _keep_awake()
     backoff = 5
     flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
