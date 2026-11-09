@@ -4,8 +4,8 @@ nickname: Deal watch
 status: planned
 links: []
 ---
-**What:** Move the server-build deal watch into pmjc: every morning, alert on any RTX 3090 Buy It Now at or under $1,200 and any listing with 8+ matching 32GB DDR4-2666+ RDIMMs at or under $140/stick (eBay, Craigslist Boston/NH/Maine, Facebook Marketplace), listing every match with links, NEW marked, split across Discord messages when long.
+**What:** Run a recurring listing watch (deal watch) as a pmjc job: every morning, search marketplaces (e.g. eBay, Craigslist, Facebook Marketplace) for items under price thresholds the user sets, list every match with links, mark NEW ones, and split long results across chat messages. The targets and thresholds live in the user's own job file, never in the repo.
 
-**Why:** It currently runs as a Claude Code scheduled task (`server-build-deal-watch`) that drives Chrome and relays through `pmjc_watch_start` (type=time, respond=raw) to the Discord notify channel, because pmjc jobs couldn't browse.
+**Why:** It currently runs as a Claude Code scheduled task that drives Chrome and relays through `pmjc_watch_start` (type=time, respond=raw) to the Discord notify channel, because pmjc jobs couldn't browse.
 
 **How:** A pmjc job using the Claude+Chrome mode, falling back to the upgraded browser and shopping connectors on a local model; then retire the scheduled task.
