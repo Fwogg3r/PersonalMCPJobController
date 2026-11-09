@@ -54,6 +54,23 @@ Every routed request is logged (rule, tier, candidates, provider, fallbacks, tur
 
 Actions with side effects still need your approval. If a request leaves approvals pending, the answer ends with a block listing each action with signed **Approve** and **Deny** links. Once you decide, pmjc continues the thread and stores the outcome; your next message in the same chat includes it in the history. Links are prefixed with `public_url` when it is set; set it when you use a phone app, because many apps can't open relative links.
 
+## Chat commands
+
+A message that starts with one of these is answered by pmjc itself: no model run, instant, free. Same token and scopes as the rest of `/v1`; replies are compact markdown (lists cap at about 60 lines), in both streaming and plain shape.
+
+| Command | Shows |
+| --- | --- |
+| `/help` | this list |
+| `/tools [filter]` | tools your token can use, by connector, with `read` or `act` (needs approval) and a one-line description; the filter matches connector or tool name and also shows tools you lack scope for, marked |
+| `/connectors` | each connector: setup, health (3 s timeout, in parallel), usable tool count |
+| `/approvals` | your pending approvals with signed Approve / Deny links (admin tokens see all) |
+| `/status` | version, uptime, provider order and health, GPU busy, this thread's sticky choice, spend today |
+| `/model [tier\|provider\|auto]` | no argument: this thread's routing and the options; with one: sets the thread's sticky choice (`auto` clears it). Never widens: a private thread stays local |
+| `/threads` | recent threads |
+| `/new` | a fresh thread for this conversation; the next message starts clean |
+
+`/strong` and `/local` are routing prefixes, not commands, and an unknown `/something` goes to the model as normal text. Commands are kept in the thread as `command` items that the model's history leaves out. Turn them off with `front_door.chat_commands: false`.
+
 ## Settings (`front_door` in settings.yaml)
 
 | key | default | |

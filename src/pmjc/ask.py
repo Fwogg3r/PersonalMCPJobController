@@ -90,7 +90,7 @@ def history(thread_id: str, turns: int, include_untrusted: bool = True) -> tuple
     """The thread's last `turns` exchanges as plain text for the prompt, whether any of it is third-party content (then
     the run counts as tainted, like any run that reads untrusted data), and whether it is sensitive (any history is:
     earlier answers and requests may hold the user's private data, so a run that gets it starts out `sensitive`)."""
-    rows = db.q("SELECT kind, text, trust FROM thread_items WHERE thread_id=? ORDER BY ts DESC, id DESC LIMIT ?",
+    rows = db.q("SELECT kind, text, trust FROM thread_items WHERE thread_id=? AND kind!='command' ORDER BY ts DESC, id DESC LIMIT ?",
                 thread_id, max(turns, 0) * 3)[::-1]
     lines, tainted = [], False
     for r in rows:
