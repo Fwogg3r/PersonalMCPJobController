@@ -108,6 +108,8 @@ See [CONNECTORS.md](CONNECTORS.md).
 - **Polling is on while needed:** a source polls when global monitoring includes it **or** an active watch needs it. Events seen only for a watch are routed but not stored.
 - **Limits and persistence:** watches expire (default 24 h, max 7 days) and need the `jobs` scope. They're stored in SQLite: the service adopts watches created by other processes (stdio MCP, CLI) every 5 s, and restores them after a restart.
 
+- **OpenAI-compatible front door** (`openai_door.py`, [FRONT_DOOR.md](FRONT_DOOR.md)): `/v1/models` and `/v1/chat/completions` run `ask()` for any OpenAI-style chat client, with conversation-to-thread mapping, SSE streaming and pending approvals appended to the answer.
+
 ## Approvals
 - **When.** An `act` tool called through **any** agent interface (stdio MCP included) creates a pending approval, unless it's on the owner's `auto_approve` list and the run is clean. Only a person at the CLI or dashboard runs act tools directly.
 - **What's stored:** the exact arguments plus a payload hash. It's single use and expires after about 10 minutes. On approval the stored payload runs; it is never regenerated.

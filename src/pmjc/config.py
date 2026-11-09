@@ -133,6 +133,16 @@ class McpServerConfig(BaseModel):
         return self
 
 
+class FrontDoorConfig(BaseModel):
+    """OpenAI-compatible endpoint (/v1/models, /v1/chat/completions) for any chat client; see docs/FRONT_DOOR.md."""
+    enabled: bool | None = None  # None = on (every request needs a token anyway); false turns the endpoints off
+    stream_progress: bool = True  # stream short "_calling tool..._" lines before the answer
+    history_turns: int = 6  # earlier request/answer pairs from the pmjc thread passed back to the model
+    max_body_bytes: int = 1_000_000
+    rate_limit_per_minute: int = 30  # per token
+    keepalive_seconds: float = 10.0  # SSE comment interval while waiting (stops mobile clients timing out)
+
+
 class Settings(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8770
@@ -168,6 +178,7 @@ class Settings(BaseModel):
     # Existing MCP servers mounted as connectors. Only settings.yaml can change this, never the API.
     mcp_servers: list[McpServerConfig] = Field(default_factory=list)
     discord_door: DiscordDoorConfig = Field(default_factory=DiscordDoorConfig)
+    front_door: FrontDoorConfig = Field(default_factory=FrontDoorConfig)
 
 
 _lock = threading.Lock()
