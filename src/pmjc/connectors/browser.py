@@ -32,6 +32,62 @@ _ROWS_JS = """(rows, fields) => rows.map(row => {
 })"""
 _URL_ATTRS = {"href", "src", "action", "data-href"}
 
+MAX_STEPS = 10
+STEP_TIMEOUT = 10  # seconds per step
+BROWSE_STEPS = {"scroll", "wait", "wait_for", "click"}
+ACT_STEPS = BROWSE_STEPS | {"type", "press"}
+# Resolves a click target (CSS selector, or "text=Some label") and, when `safe`, refuses anything that could submit
+# a form or leave the site, BEFORE clicking. The check and the click run in one script so they can't diverge.
+_CLICK_JS = """([target, safe]) => {
+  let el = null;
+  if (target.startsWith('text=')) {
+    const want = target.slice(5).trim().toLowerCase();
+    const cands = document.querySelectorAll('a,button,summary,[role=button],[aria-expanded],[onclick],label');
+    for (const c of cands) { if ((c.innerText || c.textContent || '').trim().toLowerCase().includes(want)) { el = c; break; } }
+  } else { el = document.querySelector(target); }
+  if (!el) return {error: 'not found'};
+  if (safe) {
+    const t = (el.getAttribute('type') || '').toLowerCase();
+    if (el.closest('form')) return {error: 'refused: inside a form'};
+    if (el.form || t === 'submit' || t === 'image') return {error: 'refused: submit control'};
+    const a = el.closest('a[href]');
+    if (a) {
+      let u; try { u = new URL(a.href, location.href); } catch (e) { return {error: 'refused: bad link'}; }
+      if (!/^https?:$/.test(u.protocol) || u.hostname !== location.hostname) return {error: 'refused: link to another domain'};
+    }
+  }
+  el.click();
+  return {ok: true};
+}"""
+
+
+def validate_steps(steps, allowed: set[str]) -> list[tuple[str, object]]:
+    """Check a step list; returns [(kind, value)]. Each step is a dict with exactly one key from `allowed`."""
+    if not isinstance(steps, list) or not steps:
+        raise ConnectorError('steps must be a non-empty list like [{"scroll": 2}, {"click": "text=More"}]')
+    if len(steps) > MAX_STEPS:
+        raise ConnectorError(f"at most {MAX_STEPS} steps per call (got {len(steps)})")
+    out = []
+    for st in steps:
+        if not isinstance(st, dict) or len(st) != 1:
+            raise ConnectorError(f'each step is an object with one key, e.g. {{"scroll": 1}}: {st!r}')
+        (kind, val), = st.items()
+        if kind not in allowed:
+            raise ConnectorError(f"step {kind!r} isn't allowed here; use {sorted(allowed)}")
+        if kind in ("scroll", "wait"):
+            try:
+                val = float(val)
+            except (TypeError, ValueError):
+                raise ConnectorError(f"{kind} needs a number") from None
+            val = min(max(val, -50), 50) if kind == "scroll" else min(max(val, 0), 15)
+        elif kind == "type":
+            if not isinstance(val, dict) or not val.get("selector") or "text" not in val:
+                raise ConnectorError('type needs {"selector": ..., "text": ...}')
+        elif not isinstance(val, str) or not val.strip():
+            raise ConnectorError(f"{kind} needs a non-empty string")
+        out.append((kind, val))
+    return out
+
 
 def clean_links(raw: list[dict], base: str, limit: int) -> list[dict]:
     """Absolute http(s) links, deduplicated by href, at most `limit`."""
@@ -93,9 +149,10 @@ def rightmost_monitor_origin() -> tuple[int, int]:
 
 class Browser(Connector):
     id = "browser"
-    limitations = ("Read-only: can't click, type, submit or download. Returns page text and links, or structured rows "
-                   "(browser_extract). Only domains allowed in settings; needs a saved login (pmjc browser login <url>). "
-                   "Sends the URL off the machine.")
+    limitations = ("browser_read/extract/browse are read-only (browse can scroll, wait and expand, never type or submit). "
+                   "Only browser_act can type, press keys or click submit buttons, and it needs approval. Returns page text "
+                   "and links, or structured rows (browser_extract). Only domains allowed in settings; needs a saved "
+                   "login (pmjc browser login <url>). Sends the URL off the machine.")
     native_alternatives = 'browser or computer control in your client, to interact with pages.'
     name = "Browser (signed-in profile)"
     description = "Reads pages from sites you've signed in to in pmjc's own browser profile. Run `pmjc browser login <url>` once per site."
@@ -196,6 +253,50 @@ class Browser(Connector):
                 return {"url": page.url, "title": await page.title(), "count": len(rows), "rows": rows}
             finally:
                 await page.close()
+
+    async def _run_steps(self, url: str, steps: list[tuple[str, object]], safe: bool, max_chars: int) -> dict:
+        async with self._lock:
+            page = await self._open(url, 2.0)
+            try:
+                for kind, val in steps:
+                    await asyncio.wait_for(self._step(page, kind, val, safe), STEP_TIMEOUT + 5)
+                    self._check(page.url)  # a click may have navigated: stay on allowed domains
+                text = await page.inner_text("body", timeout=15000)
+                links = clean_links(await page.eval_on_selector_all("a[href]", _LINKS_JS), page.url, 40)
+                return {"url": page.url, "title": await page.title(), "text": text[:max_chars], "links": links,
+                        "steps_run": len(steps)}
+            finally:
+                await page.close()
+
+    async def _step(self, page, kind: str, val, safe: bool) -> None:
+        ms = STEP_TIMEOUT * 1000
+        if kind == "scroll":
+            await page.evaluate("n => window.scrollBy(0, n * window.innerHeight)", val)
+        elif kind == "wait":
+            await asyncio.sleep(val)
+        elif kind == "wait_for":
+            await page.wait_for_selector(val, timeout=ms)
+        elif kind == "click":
+            r = await page.evaluate(_CLICK_JS, [val, safe])
+            if not isinstance(r, dict) or not r.get("ok"):
+                raise ConnectorError(f"click {val!r}: {(r or {}).get('error', 'failed')}")
+            await asyncio.sleep(0.5)
+        elif kind == "type":
+            await page.fill(val["selector"], str(val["text"]), timeout=ms)
+        elif kind == "press":
+            await page.keyboard.press(val)
+
+    @tool(scope="read", untrusted_output=True, egress=True)
+    async def browser_browse(self, url: str, steps: list[dict], max_chars: int = 8000) -> dict:
+        """Open a page and run up to 10 SAFE steps, then return the final text, links and URL. Steps (one key each): {"scroll": screens}, {"wait": seconds}, {"wait_for": css_selector}, {"click": css_selector or "text=Visible label"}. Clicks are refused if the target is a submit control, inside a form, or a link to another domain; there is no typing or key pressing (use browser_act, which needs approval). Same domain rules as browser_read."""
+        self._check(url)
+        return await self._run_steps(url, validate_steps(steps, BROWSE_STEPS), True, max_chars)
+
+    @tool(scope="act", untrusted_output=True, egress=True)
+    async def browser_act(self, url: str, steps: list[dict], max_chars: int = 8000) -> dict:
+        """Open a page, run up to 10 steps that may change things (type into fields, press keys, click anything including submit buttons), then return the final text, links and URL. Needs approval; the approval shows the steps. Steps (one key each): {"scroll": screens}, {"wait": seconds}, {"wait_for": css_selector}, {"click": css_selector or "text=Visible label"}, {"type": {"selector": css, "text": "..."}}, {"press": "Enter"}. Same domain rules as browser_read, checked again after each step."""
+        self._check(url)
+        return await self._run_steps(url, validate_steps(steps, ACT_STEPS), False, max_chars)
 
     async def login(self, url: str) -> None:
         """Opens a visible window (rightmost monitor) so the user can sign in; closes when they close it."""
