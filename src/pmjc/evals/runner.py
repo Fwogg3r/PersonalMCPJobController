@@ -306,7 +306,9 @@ def estimate(tasks: list[Task], provider: ProviderConfig, repeat: int, n_variant
         tools = agent._with_paging(caller, ask.ask_tools(caller))
         schema, system = agent.tool_payload(provider, tools, ask.ASK_SYSTEM, "openai")
         fixed = agent._tokens(schema) + agent._tokens(system)
-    runs = len([t for t in tasks if not t.requires_tools]) * repeat * n_variants
+        reg = registry.get()
+        runnable = [t for t in tasks if all(reg.tool(n) is not None for n in t.requires_tools)]
+    runs = len(runnable) * repeat * n_variants
     tin = runs * EST_TURNS * (fixed + EST_PROMPT_EXTRA)
     tout = runs * EST_TURNS * EST_OUT
     usd = tin / 1e6 * provider.price_in_per_mtok + tout / 1e6 * provider.price_out_per_mtok

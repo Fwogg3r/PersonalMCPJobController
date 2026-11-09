@@ -6,6 +6,7 @@ Every tool call goes through executor.call_tool, so scopes, taint and approvals 
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -33,6 +34,14 @@ Tools that change things may return {"status": "pending_approval"}: that is norm
 
 class NoProvider(Exception):
     pass
+
+
+class GpuBusy(NoProvider):
+    """The GPU is busy and the plan wanted a guarded local provider; this background run waits (config router.gpu_busy_jobs)."""
+
+
+def _gpu_guard(p: ProviderConfig) -> int | None:
+    return int(p.extra["skip_when_gpu_busy_percent"]) if p.trust == "local" and p.extra.get("skip_when_gpu_busy_percent") else None
 
 
 @dataclass
@@ -98,7 +107,33 @@ async def run(prompt: str, caller: Caller, tools: list[ToolSpec], need: router.N
               max_turns: int = 12, expect_json: bool = False, port: int | None = None) -> Result:
     tried = []
     tools = _with_paging(caller, tools)
-    for p in await router.candidates(need):
+    cands = await router.candidates(need)
+    token = None
+    if cands and not need.interactive and not router.gpu_override.get():
+        thr = _gpu_guard(cands[0])  # background work whose first choice is a guarded local provider on a busy GPU
+        info = router.gpu_info(thr) if thr else None
+        if info and info["busy"]:
+            mode = config.load().router.gpu_busy_jobs
+            if mode == "local":
+                token = router.gpu_override.set(True)
+            elif mode != "cloud" or need.private:  # wait (and never the cloud for private work)
+                raise GpuBusy(f"GPU busy ({_gpu_text(info)}); deferred, {cands[0].id} not started")
+    try:
+        return await _run_candidates(prompt, caller, tools, need, system, max_turns, expect_json, port, cands, tried)
+    finally:
+        if token is not None:
+            router.gpu_override.reset(token)
+
+
+def _gpu_text(info: dict) -> str:
+    bits = list(info.get("processes") or [])
+    if info.get("util") is not None:
+        bits.append(f"{info['util']}% utilization")
+    return ", ".join(bits) or "in use"
+
+
+async def _run_candidates(prompt, caller, tools, need, system, max_turns, expect_json, port, cands, tried) -> Result:
+    for p in cands:
         if not await router.usable(p, need):  # cheap to re-check; no cooldown (a model may be loaded a minute later)
             tried.append(f"{p.id}: unavailable")
             continue
@@ -203,7 +238,8 @@ async def _summarise(c: httpx.AsyncClient, p: ProviderConfig, headers: dict, pro
     text += "Turns to condense:\n" + _render(older, budget)
     body = {"model": p.model, "max_tokens": 700,
             "messages": [{"role": "system", "content": SUMMARY_SYSTEM}, {"role": "user", "content": text}]}
-    r = await c.post(p.base_url.rstrip("/") + "/chat/completions", json=body, headers=headers)
+    with router.local_inflight() if p.trust == "local" else contextlib.nullcontext():
+        r = await c.post(p.base_url.rstrip("/") + "/chat/completions", json=body, headers=headers)
     if r.status_code >= 400:
         raise RuntimeError(f"HTTP {r.status_code} from {p.id}: {r.text[:300]}")
     data = r.json()
@@ -268,7 +304,8 @@ async def _openai_loop(p: ProviderConfig, prompt, caller, tools, system, max_tur
             body = {"model": p.model, "messages": msgs}
             if schema:
                 body["tools"] = schema
-            r = await c.post(p.base_url.rstrip("/") + "/chat/completions", json=body, headers=headers)
+            with router.local_inflight() if p.trust == "local" else contextlib.nullcontext():
+                r = await c.post(p.base_url.rstrip("/") + "/chat/completions", json=body, headers=headers)
             if r.status_code >= 400:  # keep the server's reason (e.g. "exceeds the available context size")
                 raise RuntimeError(f"HTTP {r.status_code} from {p.id}: {r.text[:400]}")
             data = r.json()

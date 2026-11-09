@@ -299,8 +299,17 @@ class WatchManager:
         need = router.Need(capabilities={"tools"} if tools else set(), private=bool(sp.get("private")))
         try:
             caller.sensitive = True  # model.md and the notes in it are the user's private data
-            res = await agent.run(prompt, caller, tools, need, system=agent.SYSTEM + memory.system_block(),
-                                  max_turns=int(sp.get("max_turns", 6)))
+            cfg = config.load().router
+            for attempt in range(max(0, cfg.gpu_busy_max_waits) + 1):  # GPU busy (router.gpu_busy_jobs=wait): back off, retry
+                try:
+                    res = await agent.run(prompt, caller, tools, need, system=agent.SYSTEM + memory.system_block(),
+                                          max_turns=int(sp.get("max_turns", 6)))
+                    break
+                except agent.GpuBusy:
+                    if attempt >= cfg.gpu_busy_max_waits:
+                        raise
+                    log.info("watch %s: GPU busy, waiting %ss", w["id"], cfg.gpu_busy_backoff_seconds)
+                    await asyncio.sleep(cfg.gpu_busy_backoff_seconds)
             executor.audit_run(caller, f"watch:{w['id']}")
             return defang.for_caller(caller, res.text), caller.untrusted
         except Exception as e:

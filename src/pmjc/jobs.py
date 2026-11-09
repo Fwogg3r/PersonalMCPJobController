@@ -327,6 +327,10 @@ class Engine:
             await self._notify(job, text)
             return {"run": rid, "status": "ok", "provider": res.provider, "output": text,
                     "untrusted": caller.untrusted, "sensitive": caller.sensitive}
+        except agent.GpuBusy as e:  # router.gpu_busy_jobs=wait: not run now, the next schedule or event retries it
+            db.x("UPDATE runs SET status='deferred', finished=?, error=? WHERE id=?", time.time(), str(e)[:500], rid)
+            log.info("job %s deferred: %s", name, e)
+            return {"run": rid, "status": "deferred", "error": str(e)}
         except Exception as e:
             from .creds import Redactor
             err = Redactor.scrub(f"{type(e).__name__}: {e}")[:2000]

@@ -52,28 +52,60 @@ def _fake_smi(monkeypatch, util, apps):
     monkeypatch.setattr(router.subprocess, "run", run)
 
 
-def test_gpu_busy_ignores_lm_studio(monkeypatch, home):
+def _procs(monkeypatch, names):
     from pmjc import router
-    _fake_smi(monkeypatch, 90, [(1, r"C:\Apps\LM Studio\LM Studio.exe"), (2, "llama-server.exe")])
-    assert router.gpu_busy(50) is False  # only the model host itself
-    _fake_smi(monkeypatch, 90, [(1, "LM Studio.exe"), (3, "game.exe")])
-    assert router.gpu_busy(50) is True  # another compute app
-    _fake_smi(monkeypatch, 90, [])
-    assert router.gpu_busy(50) is True  # load nothing explains (a game)
-    _fake_smi(monkeypatch, 10, [(3, "game.exe")])
-    assert router.gpu_busy(50) is False  # below threshold
-    _fake_smi(monkeypatch, 90, [(1, "ollama.exe")])
-    assert router.gpu_busy(50, ignore=[]) is True  # nothing ignored
+    monkeypatch.setattr(router, "_matching", lambda needles: sorted(x for x in names if any(n.lower() in x.lower() for n in needles if n)))
+
+
+def test_gpu_busy_rules(monkeypatch, home):
+    from pmjc import router
+    # (a) a listed game while LM Studio runs = busy, even at low utilization
+    _fake_smi(monkeypatch, 5, [(1, "LM Studio.exe")])
+    _procs(monkeypatch, ["LM Studio.exe", "MyGame.exe"])
+    assert router.gpu_busy(50, ["mygame"]) is True
+    # nothing listed, no high utilization: not busy
+    assert router.gpu_busy(50, []) is False
+    # (b) high utilization with no pmjc request in flight = busy
+    _fake_smi(monkeypatch, 90, [(1, "LM Studio.exe")])
+    assert router.gpu_busy(50, []) is True
+    _fake_smi(monkeypatch, 10, [])
+    assert router.gpu_busy(50, []) is False
+    # (c) high utilization while pmjc's own request is in flight = not busy
+    _fake_smi(monkeypatch, 95, [(1, "LM Studio.exe")])
+    with router.local_inflight():
+        assert router.local_requests() == 1
+        assert router.gpu_busy(50, []) is False
+        assert router.gpu_busy(50, ["mygame"]) is True  # (a) still wins
+    assert router.local_requests() == 0
+    # no nvidia-smi: only the process list applies
     monkeypatch.setattr(router.shutil, "which", lambda n: None)
-    assert router.gpu_busy(50) is False  # no nvidia-smi
+    assert router.gpu_busy(50, []) is False
+    assert router.gpu_busy(50, ["mygame"]) is True
 
 
-def test_gpu_ignore_list_is_configurable(monkeypatch, home):
+def test_gpu_busy_processes_from_config(monkeypatch, home):
     from pmjc import router
-    _fake_smi(monkeypatch, 90, [(1, "mytool.exe")])
-    assert router.gpu_busy(50) is True
-    _set(gpu_ignore_processes=["MYTOOL"])
+    _fake_smi(monkeypatch, 0, [])
+    _procs(monkeypatch, ["launcher.exe"])
     assert router.gpu_busy(50) is False
+    _set(gpu_busy_processes=["LAUNCHER"])
+    assert router.gpu_busy(50) is True
+
+
+def test_running_falls_back_to_tasklist(monkeypatch, home):
+    import builtins
+    from pmjc import router
+    real = builtins.__import__
+
+    def no_psutil(n, *a, **k):
+        if n == "psutil":
+            raise ImportError(n)
+        return real(n, *a, **k)
+    monkeypatch.setattr(builtins, "__import__", no_psutil)
+    out = "game.exe\n"
+    monkeypatch.setattr(router.subprocess, "run", lambda *a, **k: types.SimpleNamespace(stdout=out, returncode=0))
+    assert router._running(["GAME"]) is True
+    assert router._running(["other"]) is False
 
 
 async def test_interactive_does_not_block_and_starts_in_background(monkeypatch, cfg):
@@ -190,18 +222,25 @@ async def test_routing_never_widens_candidates(cfg):
 def run(cfg, monkeypatch):
     """ask() with agent.run faked: records the Need it got and answers as the first candidate."""
     from pmjc import agent, ask as ask_mod
-    seen = []
+    class Seen(list):
+        fb: list[str]
+        pick: str = ""  # answer as this provider instead of the first in the order
+    seen = Seen()
+    seen_fb: list[str] = []  # fallbacks the fake reports for the next answers
 
     async def fake_run(prompt, c, tools, need, system=None, max_turns=12, **k):
-        seen.append({"prompt": prompt, "order": list(need.order or []), "interactive": need.interactive})
+        from pmjc import router as _r
+        seen.append({"prompt": prompt, "order": list(need.order or []), "interactive": need.interactive,
+                     "gpu_override": _r.gpu_override.get()})
         if c.on_tool:
             await c.on_tool("web_search", {}, "ok")
             await c.on_tool("web_fetch", {}, "error")
-        return agent.Result("answer", need.order[0], 0.0123, 2, ["x: boom"])
+        return agent.Result("answer", seen.pick or need.order[0], 0.0123, 2, list(seen_fb))
     monkeypatch.setattr(agent, "run", fake_run)
 
     async def go(text, c=None, **kw):
         return await ask_mod.ask(c or caller(), text, **kw)
+    seen.fb = seen_fb
     return go, seen
 
 
@@ -249,8 +288,10 @@ async def test_history_alone_does_not_make_thread_private(run):
 async def test_routing_log_and_retry_of(run):
     from pmjc import db, routing
     go, seen = run
+    seen.fb.append("x: boom")
     r1 = await go("what is X")
     tid = r1["thread_id"]
+    seen.fb.clear()
     rows = db.q("SELECT * FROM routing")
     assert len(rows) == 1 and rows[0]["thread_id"] == tid and rows[0]["surface"] == "discord"
     assert rows[0]["rule"] == "default" and rows[0]["tier"] == "default" and rows[0]["provider"] == "loc"

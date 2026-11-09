@@ -182,7 +182,20 @@ def default_route_rules() -> list[RouteRule]:
 
 class RouterConfig(BaseModel):
     """Front-door routing and router tuning. Everything has a generic default that works without configuration."""
-    gpu_ignore_processes: list[str] = Field(default_factory=lambda: ["LM Studio", "lms", "llama", "ollama"])
+    # Process names (substring, case-insensitive) that mean the GPU is in use by the owner, e.g. games or launchers.
+    gpu_busy_processes: list[str] = Field(default_factory=list)
+    # What to do when the GPU is busy and the plan wanted a guarded local provider (extra.skip_when_gpu_busy_percent).
+    # Interactive requests: ask = offer "use local anyway / use a cloud model / wait"; cloud = go to the cloud; local = run anyway.
+    gpu_busy_action: str = "ask"
+    # Jobs and watches: wait = defer (a job run is recorded as deferred and retried on its next schedule; a watch retries
+    # after gpu_busy_backoff_seconds, gpu_busy_max_waits times); cloud / local = go there. Private work never goes to the cloud.
+    gpu_busy_jobs: str = "wait"
+    gpu_busy_backoff_seconds: float = 120.0
+    gpu_busy_max_waits: int = 5
+    # Sticky provider after a fallback: stay on the fallback provider when the thread is "hard" (plan tier strong, this
+    # many tool calls in the last run, a condense happened, or history over this share of the planned provider's context).
+    stay_tool_calls: int = 4
+    stay_history_share: float = 0.5
     # Named provider lists; the order is the fallback. Built in (derived from `routing`): default = the routing order,
     # strong = the non-local providers, local = the local providers. Entries here replace or add tiers.
     tiers: dict[str, list[str]] = Field(default_factory=dict)

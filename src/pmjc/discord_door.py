@@ -92,6 +92,14 @@ def approval_buttons(aid: str) -> list[dict]:
         {"type": 2, "style": 4, "label": "Deny", "custom_id": f"{BUTTON_PREFIX}d:{aid}"}]}]
 
 
+def route_buttons(choice: dict) -> list[dict]:
+    """GPU busy: one button per offered route (approving it runs the request there); waiting needs no button."""
+    btns = [{"type": 2, "style": 1 if o["id"] == "cloud" else 2, "custom_id": f"{BUTTON_PREFIX}a:{o['approval_id']}",
+             "label": "Use a cloud model" if o["id"] == "cloud" else "Use local anyway"}
+            for o in choice.get("options", []) if o.get("approval_id")]
+    return [{"type": 1, "components": btns}] if btns else []
+
+
 def approval_text(a: dict) -> str:
     args = a.get("args") or "{}"
     limit = 1700 if a.get("tool") == "pmjc_shell_run" else 900  # a shell command is always shown whole
@@ -246,6 +254,11 @@ class Door:
             return
         finally:
             typing.cancel()
+        if res.get("route_choice"):  # GPU busy: nothing ran yet, the owner picks where
+            if tid is None:
+                self.bind(reply_ch, res["thread_id"])
+            await self.send(reply_ch, res["answer"], components=route_buttons(res["route_choice"]), suppress_embeds=True)
+            return
         if tid is None:
             self.bind(reply_ch, res["thread_id"])
             if new_thread and self.cfg.auto_title:
@@ -267,8 +280,8 @@ class Door:
         quiet = bool(res.get("untrusted"))  # tainted answer: no link previews (flag SUPPRESS_EMBEDS)
         for part in chunks(res["answer"] + footer):
             await self.send(reply_ch, part, suppress_embeds=quiet)
-        for a in db.q("SELECT id, tool, args, reason, tainted FROM approvals WHERE thread_id=? AND status='pending' AND created>=?",
-                      res["thread_id"], started - 1):
+        for a in db.q("SELECT id, tool, args, reason, tainted FROM approvals WHERE thread_id=? AND status='pending' AND created>=?"
+                      " AND tool!='pmjc_route_override'", res["thread_id"], started - 1):
             await self.send(reply_ch, approval_text(a), components=approval_buttons(a["id"]), suppress_embeds=True)
 
     async def _retitle(self, channel_id: str, thread_id: str, request: str, answer: str, provider: str) -> None:
@@ -368,6 +381,12 @@ class Door:
         await self.api("PATCH", f"/webhooks/{app_id}/{i['token']}/messages/@original",
                        {"content": body[:MAX_MSG], "components": [], "allowed_mentions": {"parse": []}})
         ch = i.get("channel_id")
+        if ch and tool_name == "pmjc_route_override":  # a routing choice: run the original request again, there
+            if status == "done" and self.thread_for(ch) is not None:
+                req = json.loads(db.q("SELECT args FROM approvals WHERE id=?", aid)[0]["args"]).get("request", "")
+                if req:
+                    self.spawn(self._continue(ch, not i.get("guild_id"), req, user["id"]))
+            return
         if ch and status in ("done", "denied", "failed") and self.thread_for(ch) is not None:
             from . import ask as ask_mod
             text = ask_mod.outcome_text(tool_name, status, detail)

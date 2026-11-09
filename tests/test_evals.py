@@ -183,6 +183,7 @@ class FakeLLM:
 
     def __init__(self, monkeypatch):
         self.requests: list[dict] = []
+        self.sub_requests: list[dict] = []
         outer = self
 
         def tc(name, args):
@@ -199,8 +200,17 @@ class FakeLLM:
             msgs = body["messages"]
             first = next(m["content"] for m in msgs if m["role"] == "user")
             usage = {"prompt_tokens": 100, "completion_tokens": 10}
-            if msgs[-1]["role"] != "tool":
-                if "weather" in first:
+            sub = first.startswith("Question:")  # the pmjc_research sub-run
+            if sub:
+                outer.sub_requests.append(body)
+                if msgs[-1]["role"] != "tool":
+                    m = tc("web_search", {"queries": ["budget grinder nimbus cobalt"]})
+                else:
+                    m = {"role": "assistant", "content": "The Nimbus G2 costs $149 and the Cobalt C1 $99 (https://example.org/grinder-review)."}
+            elif msgs[-1]["role"] != "tool":
+                if "Research which" in first:
+                    m = tc("pmjc_research", {"question": "Which budget coffee grinder should I buy?"})
+                elif "weather" in first:
                     m = tc("weather_forecast", {"place": "Springfield"})
                 elif "Team lunch" in first:
                     m = tc("calendar_create", {"title": "Team lunch", "start_iso": "2030-03-18T12:00",
@@ -210,6 +220,8 @@ class FakeLLM:
                                                "end_iso": "2030-03-19T15:30"})
                 else:
                     m = {"role": "assistant", "content": "no idea"}
+            elif "Research which" in first:
+                m = {"role": "assistant", "content": "Two sources agree: the Nimbus G2 ($149) beats the Cobalt C1 ($99) on build."}
             elif "weather" in first:
                 m = {"role": "assistant", "content": "Springfield today: light rain, high 9C."}
             else:
@@ -229,14 +241,16 @@ async def test_end_to_end_two_tasks_on_a_fake_server(monkeypatch, home):
     report = await runner.run_eval(ts, [_prov()], repeat=1, timeout=60)
     assert len(report["rows"]) == 1
     row = report["rows"][0]
-    assert row["runs"] == 2 and row["skipped"] == 1  # pmjc_research does not exist: skipped, not failed
+    assert row["runs"] == 3 and row["skipped"] == 0  # the research task runs against the fake web tools
     assert [r["error"] for r in report["runs"]] == ["", "", ""]
     assert row["errors"] == 0 and row["fallbacks"] == 0
-    assert row["mean_score"] == 1.0 and row["passed"] == 2
-    assert row["mean_turns"] == 2.0  # a tool call, then the answer
-    assert row["tokens_in"] == 400 and row["tokens_out"] == 40  # 4 model calls reported usage
+    assert row["mean_score"] == 1.0 and row["passed"] == 3
     by = {r["task"]: r for r in report["runs"]}
-    assert by["research_compare_sources"]["skipped"].startswith("needs pmjc_research")
+    rs = by["research_compare_sources"]
+    assert [c["name"] for c in rs["calls"]][:1] == ["pmjc_research"] and rs["calls"][0]["status"] == "ok"
+    # the sub-run saw only the fake web tools, and the model got the fake page data back
+    sub_tools = {t["function"]["name"] for t in llm.sub_requests[0]["tools"]}
+    assert {"web_search", "web_fetch"} <= sub_tools <= {"web_search", "web_fetch", "pmjc_result_get"}
     cal = by["calendar_create_approved"]
     assert [c["status"] for c in cal["calls"] if c["name"] == "calendar_create"] == ["pending_approval"]
     # the approval was auto-decided "approve" and the fake act ran (recorded, nothing real happened)
@@ -248,7 +262,7 @@ async def test_end_to_end_two_tasks_on_a_fake_server(monkeypatch, home):
     assert not any(n.startswith(("discord", "gmail", "ha_")) for n in names)
     assert "2030-03-14" in llm.requests[0]["messages"][0]["content"]
     md = runner.render_markdown(report)
-    assert "| fake |" in md and "weather_lookup" in md and "skipped" in md
+    assert "| fake |" in md and "weather_lookup" in md and "research_compare_sources" in md
     out = runner.save_report(report, home / "elsewhere" / "r.json")
     assert json.loads(out.read_text())["rows"][0]["mean_score"] == 1.0
 

@@ -11,6 +11,8 @@ with `lms load`. A GPU guard skips local hosts while the GPU is busy (e.g. a gam
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import csv
 import json
 import logging
@@ -75,35 +77,83 @@ def _smi(smi: str, *args: str) -> str:
     return subprocess.run([smi, *args], capture_output=True, text=True, timeout=10, creationflags=flags).stdout
 
 
-def gpu_busy(threshold: int, ignore: list[str] | None = None) -> bool:
-    """True when the GPU is at or over `threshold` percent for a reason other than the local model host itself.
+_local_inflight = 0
 
-    LM Studio's own inference must not count as "busy" (it would make local models skip themselves while answering).
-    Utilization counts unless every listed compute process matches an `ignore` substring (case-insensitive;
-    default config router.gpu_ignore_processes). Any other compute app, or load no process explains (a game), counts."""
+
+@contextlib.contextmanager
+def local_inflight():
+    """Count a local inference request pmjc itself has in flight (see gpu_busy rule c)."""
+    global _local_inflight
+    _local_inflight += 1
+    try:
+        yield
+    finally:
+        _local_inflight -= 1
+
+
+def local_requests() -> int:
+    return _local_inflight
+
+
+def _running(names: list[str]) -> bool:
+    return bool(_matching(names))
+
+
+def _matching(names: list[str]) -> list[str]:
+    """Names of running processes that contain one of `names` (case-insensitive)."""
+    needles = [n.lower() for n in names if n]
+    if not needles:
+        return []
+    try:
+        import psutil
+        procs = [(p.info.get("name") or "").lower() for p in psutil.process_iter(["name"])]
+    except Exception:
+        try:
+            if os.name == "nt":
+                out = subprocess.run(["tasklist", "/fo", "csv", "/nh"], capture_output=True, text=True, timeout=10,
+                                     creationflags=subprocess.CREATE_NO_WINDOW).stdout
+                procs = [row[0].lower() for row in csv.reader(out.splitlines()) if row]
+            else:
+                out = subprocess.run(["ps", "-eo", "comm"], capture_output=True, text=True, timeout=10).stdout
+                procs = [l.strip().lower() for l in out.splitlines()]
+        except Exception:
+            return []
+    return sorted({name for name in procs if any(n in name for n in needles)})
+
+
+def gpu_info(threshold: int, processes: list[str] | None = None) -> dict:
+    """{busy, util, processes, why}: see gpu_busy for the rules. `processes` are the listed ones that are running."""
+    if processes is None:
+        processes = config.load().router.gpu_busy_processes
+    out = {"busy": False, "util": None, "processes": [], "why": ""}
+    found = _matching(processes)
     smi = shutil.which("nvidia-smi")
-    if not smi:
-        return False
-    try:
-        util = max(int(x) for x in _smi(smi, "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits").split())
-    except Exception:
-        return False
-    if util < threshold:
-        return False
-    if ignore is None:
-        ignore = config.load().router.gpu_ignore_processes
-    needles = [i.lower() for i in ignore if i]
-    try:
-        out = _smi(smi, "--query-compute-apps=pid,process_name,used_memory", "--format=csv,noheader,nounits")
-    except Exception:
-        return True
-    names = []
-    for row in csv.reader(line for line in out.splitlines() if line.strip()):
-        if len(row) >= 2:
-            names.append(row[1].strip().lower())
-    if not names or not needles:
-        return True
-    return not all(any(n in name for n in needles) for name in names)
+    util = None
+    if smi:
+        try:
+            util = max(int(x) for x in _smi(smi, "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits").split())
+        except Exception:
+            util = None
+    out["util"] = util
+    if found:
+        out.update(busy=True, processes=found, why="a listed process is running")
+    elif _local_inflight == 0 and util is not None and util >= threshold:
+        out.update(busy=True, why="high utilization")
+    return out
+
+
+def gpu_busy(threshold: int, processes: list[str] | None = None) -> bool:
+    """True when the GPU is busy with something other than pmjc's own local models. In order:
+    (a) a process named in router.gpu_busy_processes (games, launchers) is running -> busy;
+    (b) utilization at or over `threshold` percent while pmjc has no local request in flight -> busy;
+    (c) high utilization while pmjc has local requests in flight -> not busy (the load can't be told apart from a
+        game, so only the process list in (a) is trusted).
+    Without nvidia-smi only (a) applies. Games are graphics apps, so nvidia-smi's compute-app list can't see them."""
+    return gpu_info(threshold, processes)["busy"]
+
+
+# Set while a run the owner chose to start on a busy GPU ("use local anyway") is going.
+gpu_override: contextvars.ContextVar[bool] = contextvars.ContextVar("pmjc_gpu_override", default=False)
 
 
 def api_key(p: ProviderConfig) -> str | None:
@@ -143,7 +193,7 @@ async def healthy(p: ProviderConfig, start: bool = True) -> bool:
         return bool(api_key(p))
     if p.credential and not api_key(p):
         return False
-    if p.trust == "local" and p.extra.get("skip_when_gpu_busy_percent") and gpu_busy(int(p.extra["skip_when_gpu_busy_percent"])):
+    if p.trust == "local" and p.extra.get("skip_when_gpu_busy_percent") and not gpu_override.get() and gpu_busy(int(p.extra["skip_when_gpu_busy_percent"])):
         log.info("%s skipped: GPU busy", p.id)
         return False
     models = await _models(p)

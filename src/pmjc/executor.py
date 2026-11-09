@@ -14,7 +14,7 @@ import time
 from typing import Any
 from urllib.parse import urlparse, urlsplit
 
-from . import auth, config, db, defang, memory, registry, results, shell
+from . import auth, config, db, defang, memory, registry, results, route_choice, shell
 from .auth import Caller
 
 log = logging.getLogger("pmjc.executor")
@@ -256,7 +256,10 @@ async def decide(aid: str, approve: bool, decided_by: str) -> dict:
         return {"status": "denied"}
     t = registry.get().tool(a["tool"])
     try:
-        res = await _invoke(t.fn, args, _approved_caller(a, t))
+        if a["tool"] == route_choice.TOOL:  # internal: records the owner's routing choice, runs nothing else
+            res = route_choice.decided(a, args)
+        else:
+            res = await _invoke(t.fn, args, _approved_caller(a, t))
         out = json.dumps(res, default=str)[:20000]
         db.x("UPDATE approvals SET status='done', result=? WHERE id=?", out, aid)
         db.audit(decided_by, a["tool"], a["payload_hash"], "approved_ok", aid)

@@ -260,8 +260,8 @@ class Selection:
 
 def begin(p: ProviderConfig, caller: Caller, tools: list[ToolSpec], prompt: str) -> Selection | None:
     """Pick the tools of a select-mode run. None for tool_mode all (or nothing to select among)."""
-    if p.tool_mode != "select" or not tools:
-        return None
+    if p.tool_mode != "select" or not tools or caller.quarantine:
+        return None  # a quarantined research sub-run always gets its few web tools in full, never briefs
     reg = registry.get()
     allowed = caller.allowed_tools
     usable = [t for t in tools if allowed is None or t.name in allowed]

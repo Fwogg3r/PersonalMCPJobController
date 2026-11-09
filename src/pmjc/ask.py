@@ -9,7 +9,7 @@ from __future__ import annotations
 import contextlib
 import json
 
-from . import agent, db, defang, executor, memory, registry, router, routing, tool_select
+from . import agent, db, defang, executor, memory, registry, route_choice, router, routing, tool_select
 from .auth import Caller
 
 ASK_SYSTEM = agent.SYSTEM + """
@@ -124,6 +124,7 @@ async def ask(caller: Caller, text: str, private: bool = False, provider_order: 
     if private:
         memory.thread_make_private(thread_id)
     caller.thread_id = thread_id
+    choice = route_choice.take(thread_id) if thread_exists_before else None  # "use local anyway" / "use cloud" for this run
     prompt = text
     if history_turns and thread_exists_before:
         past, tainted, had_history = history(thread_id, history_turns)
@@ -134,18 +135,46 @@ async def ask(caller: Caller, text: str, private: bool = False, provider_order: 
     caller.select_hint = tool_select.trusted_hint(thread_id, text, history_turns if thread_exists_before else 0)
     if text.startswith(APPROVAL_MARK):
         caller.sensitive = True  # an approved action's result detail: may hold private data
+    need = router.Need(private=private)
+    await routing.apply(plan, need)  # order from the plan, re-checked against router.candidates()
+    gpu_token = None
+    if choice == "cloud" and route_choice.cloud_ids(plan) and not private:
+        plan.order = need.order = route_choice.cloud_ids(plan)
+        plan.tier, plan.rule = "strong", "gpu busy: cloud"
+        plan.fallback_reason, plan.decision = "GPU busy", "gpu busy: the user chose a cloud model"
+    elif choice == "local":
+        gpu_token = router.gpu_override.set(True)
+        plan.decision = "gpu busy: the user chose local anyway"
+    else:
+        info = route_choice.gate(plan, private)
+        if info:
+            action = route_choice.action_for(private)
+            if action == "ask":
+                offered = route_choice.offer(caller, thread_id, text, info, private, plan)
+                plan.rule, plan.decision = "gpu busy", "gpu busy: asked (" + ", ".join(
+                    o["id"] for o in offered["route_choice"]["options"]) + ")"
+                routing.finish(plan, None, thread_id)
+                return {"answer": offered["answer"], "provider": "", "watches": [], "thread_id": thread_id, "cost_usd": 0,
+                        "fell_back": [], "untrusted": False, "sensitive": False, "routing": None,
+                        "route_choice": offered["route_choice"]}
+            if action == "local":
+                gpu_token = router.gpu_override.set(True)
+                plan.decision = "gpu busy: ran local anyway (router.gpu_busy_action=local)"
+            else:
+                plan.fallback_reason, plan.decision = "GPU busy", "gpu busy: went to the cloud (router.gpu_busy_action=cloud)"
     memory.thread_add(thread_id, "request", text, author=caller.name, trust=memory.trust_of(caller))
     started_before = {r["id"] for r in db.q("SELECT id FROM watches WHERE created_by=?", caller.name)}
     system = ASK_SYSTEM + memory.system_block() + (f"\n\n{extra_system}" if extra_system else "")
     caller.sensitive = True  # model.md and the notes in it are the user's private data
-    need = router.Need(private=private)
-    await routing.apply(plan, need)  # order from the plan, re-checked against router.candidates()
     routing.track(caller, plan)
     try:
         res = await agent.run(prompt, caller, tools, need, system=system, max_turns=10)
     except Exception as e:
         routing.finish(plan, None, thread_id, error=f"{type(e).__name__}: {e}")
         raise
+    finally:
+        if gpu_token is not None:
+            router.gpu_override.reset(gpu_token)
     info = routing.finish(plan, res, thread_id)
     watches = [r["id"] for r in db.q("SELECT id FROM watches WHERE created_by=?", caller.name) if r["id"] not in started_before]
     answer = defang.for_caller(caller, res.text)  # a run that read untrusted content can't smuggle data out in links
@@ -161,11 +190,19 @@ async def continue_after_approval(aid: str, res: dict) -> str | None:
     """After an approval decided over REST, CLI or the approval link, feed the outcome back into its thread (as the
     Discord door does), store the answer there as unread, and send it to the notify channels if
     config approval_outcome_notify is on. Returns the answer, or None if there is no thread to continue."""
-    from . import config, registry as reg_mod
+    from . import config
     rows = db.q("SELECT tool, thread_id FROM approvals WHERE id=?", aid)
     status = res.get("status")
     if not rows or not rows[0].get("thread_id") or status not in ("done", "denied", "failed"):
         return None
+    if rows[0]["tool"] == route_choice.TOOL:  # the owner chose where a GPU-busy request should run: run it now
+        if status != "done":
+            return None
+        req = json.loads(db.q("SELECT args FROM approvals WHERE id=?", aid)[0]["args"]).get("request", "")
+        caller = Caller(f"approval:{aid}", "job", {"sources", "jobs", "actions"})
+        out = await ask(caller, req, thread_id=rows[0]["thread_id"], history_turns=3)
+        await _notify_outcome(rows[0]["thread_id"], rows[0]["tool"], status, out)
+        return out["answer"]
     detail = res.get("result") if res.get("result") is not None else res.get("error", "")
     if not isinstance(detail, str):
         detail = json.dumps(detail, default=str)
@@ -176,6 +213,12 @@ async def continue_after_approval(aid: str, res: dict) -> str | None:
     except Exception:
         caller.untrusted = True  # unknown tool: be safe
     out = await ask(caller, outcome_text(rows[0]["tool"], status, detail), thread_id=tid, history_turns=3)
+    await _notify_outcome(tid, rows[0]["tool"], status, out)
+    return out["answer"]
+
+
+async def _notify_outcome(tid: str, tool: str, status: str, out: dict) -> None:
+    from . import config, registry as reg_mod
     with contextlib.suppress(Exception):
         db.x("UPDATE threads SET status='updated', unread=1 WHERE id=?", tid)
     if config.load().approval_outcome_notify:
@@ -184,5 +227,4 @@ async def continue_after_approval(aid: str, res: dict) -> str | None:
         chans = [reg.connectors[i] for i in ids if i in reg.connectors and reg.connectors[i].is_channel] or reg.channels()[:1]
         for ch in chans:
             with contextlib.suppress(Exception):
-                await ch.notify(f"pmjc: {rows[0]['tool']} {status}", f"{out['answer'][:3400]}\n\nResume: thread {tid}")
-    return out["answer"]
+                await ch.notify(f"pmjc: {tool} {status}", f"{out['answer'][:3400]}\n\nResume: thread {tid}")

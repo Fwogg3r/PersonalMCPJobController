@@ -109,8 +109,8 @@ def approvals_block(thread_id: str, since: float) -> str:
     from . import auth
     base = config.load().public_url.rstrip("/")
     out = []
-    for a in db.q("SELECT id, tool, reason FROM approvals WHERE thread_id=? AND status='pending' AND created>=?",
-                  thread_id, since - 1):
+    for a in db.q("SELECT id, tool, reason FROM approvals WHERE thread_id=? AND status='pending' AND created>=? "
+                  "AND tool!='pmjc_route_override'", thread_id, since - 1):
         aid = a["id"]
         ok = f"{base}/approve/{aid}?sig={auth.sign('approve:' + aid)}"
         no = f"{base}/approve/{aid}?deny=1&sig={auth.sign('deny:' + aid)}"
@@ -119,6 +119,13 @@ def approvals_block(thread_id: str, since: float) -> str:
     if not out:
         return ""
     return "\n\n---\n**Waiting for your approval:**\n" + "\n".join(out)
+
+
+def route_block(choice: dict) -> str:
+    """GPU busy: signed links for the offered routes (like the approvals block)."""
+    links = [f"[{o['label'].split(' (')[0]}]({o['approve_url']})" for o in choice.get("options", []) if o.get("approve_url")]
+    return ("\n\n---\n" + " / ".join(links) + "\nThe answer follows in this thread after you choose; or just ask again later."
+            ) if links else ""
 
 
 def _rate_ok(name: str, limit: int) -> bool:
@@ -202,8 +209,10 @@ def register(app: FastAPI, bearer, need) -> None:
             res = await ask_mod.ask(caller, text, private=private, provider_order=order, thread_id=tid,
                                     history_turns=fd.history_turns)
             answer = res["answer"] + approvals_block(res["thread_id"], started)
+            if res.get("route_choice"):
+                answer += route_block(res["route_choice"])
             thread_store(key or pair_key(c.name, first_user, answer), res["thread_id"])  # (_norm ignores the footer)
-            if routing.footer_enabled("v1"):
+            if routing.footer_enabled("v1") and not res.get("route_choice"):
                 answer += "\n\n" + routing.footer_line(res.get("provider", ""), res.get("routing"), res.get("cost_usd") or 0)
             usage = res.get("usage") or {}
             pt, ct = int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0))

@@ -36,10 +36,13 @@ Each request is routed in this order: an explicit choice (model id, or a rule wi
 |---|---|---|
 | `tiers` | built in | `{name: [provider ids]}`, order = fallback. Built in: `default` (routing order), `strong` (non-local), `local` |
 | `route_rules` | `/strong`, `/local` prefixes | ordered; first match wins. Matchers: `prefix`, `keywords` (whole words), `surface` (discord, rest, cli, v1, job), `min_chars`, `has_image`; each gives a `tier` |
-| `sticky` | true | a thread keeps the provider chosen on its first routed turn |
+| `sticky` | true | a thread keeps the provider that answered. After a fallback it remembers the planned provider too: next turn it stays on the fallback if the thread is hard (strong tier, `stay_tool_calls` tool calls, condensed, or history over `stay_history_share` of the planned context), else switches back. The footer says which and offers a pivot (`/local`, `/strong`) |
+| `stay_tool_calls`, `stay_history_share` | 4, 0.5 | the "hard thread" thresholds above |
+| `gpu_busy_action` | ask | GPU busy and the plan wanted a guarded local provider (`extra.skip_when_gpu_busy_percent`): `ask` offers use local anyway (approval) / use a cloud model / wait; `cloud`; `local`. Private work is never sent to the cloud |
+| `gpu_busy_jobs` | wait | the same for jobs and watches: `wait` (a job run is `deferred`, a watch retries after `gpu_busy_backoff_seconds`, up to `gpu_busy_max_waits` times), `cloud` or `local` |
 | `footer` | true | last line of an answer, e.g. `⟡ local-27b · rule: /strong · tools: web_search · $0.000`; stripped from history |
 | `footer_surfaces` | discord, v1 | REST and CLI JSON answers carry no footer |
-| `gpu_ignore_processes` | LM Studio, lms, llama, ollama | GPU load from these does not count as "busy" |
+| `gpu_busy_processes` | none | process names (games, launchers) that mean the GPU is busy. Otherwise high utilization counts as busy only while pmjc has no local request in flight |
 
 Every routed request is logged (rule, tier, candidates, provider, fallbacks, turns, tool errors, cost); `pmjc routing --days N` summarises it and the dashboard's Routing tab shows it. A `/strong`-style prefix on a thread's next turn is recorded as `retry_of` the previous routed turn (a misroute label).
 
