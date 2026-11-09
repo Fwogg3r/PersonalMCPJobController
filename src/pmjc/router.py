@@ -11,6 +11,7 @@ with `lms load`. A GPU guard skips local hosts while the GPU is busy (e.g. a gam
 from __future__ import annotations
 
 import asyncio
+import csv
 import json
 import logging
 import os
@@ -37,6 +38,7 @@ class Need:
     private: bool = False  # local providers only; never fall back to the cloud
     min_context: int = 0
     order: list[str] | None = None  # job-specific provider order (ids)
+    interactive: bool = False  # a person is waiting: never block on starting or loading a local host
 
 
 def month_spend(provider_id: str) -> float:
@@ -68,17 +70,40 @@ def _run(cmd: str | list[str], timeout: int) -> bool:
         return False
 
 
-def gpu_busy(threshold: int) -> bool:
+def _smi(smi: str, *args: str) -> str:
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    return subprocess.run([smi, *args], capture_output=True, text=True, timeout=10, creationflags=flags).stdout
+
+
+def gpu_busy(threshold: int, ignore: list[str] | None = None) -> bool:
+    """True when the GPU is at or over `threshold` percent for a reason other than the local model host itself.
+
+    LM Studio's own inference must not count as "busy" (it would make local models skip themselves while answering).
+    Utilization counts unless every listed compute process matches an `ignore` substring (case-insensitive;
+    default config router.gpu_ignore_processes). Any other compute app, or load no process explains (a game), counts."""
     smi = shutil.which("nvidia-smi")
     if not smi:
         return False
     try:
-        flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-        out = subprocess.run([smi, "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"],
-                             capture_output=True, text=True, timeout=10, creationflags=flags).stdout
-        return max(int(x) for x in out.split()) >= threshold
+        util = max(int(x) for x in _smi(smi, "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits").split())
     except Exception:
         return False
+    if util < threshold:
+        return False
+    if ignore is None:
+        ignore = config.load().router.gpu_ignore_processes
+    needles = [i.lower() for i in ignore if i]
+    try:
+        out = _smi(smi, "--query-compute-apps=pid,process_name,used_memory", "--format=csv,noheader,nounits")
+    except Exception:
+        return True
+    names = []
+    for row in csv.reader(line for line in out.splitlines() if line.strip()):
+        if len(row) >= 2:
+            names.append(row[1].strip().lower())
+    if not names or not needles:
+        return True
+    return not all(any(n in name for n in needles) for name in names)
 
 
 def api_key(p: ProviderConfig) -> str | None:
@@ -154,6 +179,38 @@ async def healthy(p: ProviderConfig, start: bool = True) -> bool:
             return False
         p.model = models[0]  # whatever is loaded
     return True
+
+
+_starting: dict[str, asyncio.Task] = {}
+
+
+def kick_start(p: ProviderConfig) -> bool:
+    """Start/load a local host in the background (once at a time per provider). False if not started."""
+    if not config.load().auto_start_local:
+        return False
+    t = _starting.get(p.id)
+    if t is not None and not t.done():
+        return False
+
+    async def go():
+        try:
+            await healthy(p, start=True)
+        except Exception:
+            log.warning("background start of %s failed", p.id, exc_info=True)
+    _starting[p.id] = asyncio.get_running_loop().create_task(go())
+    return True
+
+
+async def usable(p: ProviderConfig, need: Need) -> bool:
+    """Healthy enough to run `need` now. Interactive requests don't wait for a local host: if it is down it is started
+    in the background and the caller moves on to the next candidate. Jobs and watches keep the blocking start."""
+    if not need.interactive:
+        return await healthy(p)
+    if await healthy(p, start=False):
+        return True
+    if p.trust == "local" and p.kind == "openai_compat":
+        kick_start(p)
+    return False
 
 
 def _lms_load(p: ProviderConfig) -> list[str] | None:

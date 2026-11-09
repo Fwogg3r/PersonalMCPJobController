@@ -310,9 +310,13 @@ def remote(public_url: str = typer.Argument(..., help="e.g. https://pmjc.example
 
 
 @app.command()
-def routing():
-    """Model providers in priority order with health and spend."""
+def routing(days: Optional[float] = typer.Option(None, "--days", help="summarise the routing log of the last N days instead")):
+    """Model providers in priority order with health and spend; with --days, the routing log (rules, providers, retries)."""
     from . import router
+    from . import routing as routing_mod
+    if days is not None:
+        _out(routing_mod.summary(days))
+        return
     _out(asyncio.run(router.status()))
 
 

@@ -137,6 +137,9 @@ async function routing(){ const d=await api("/api/routing"); const st=Object.fro
     <td><input data-k="monthly_budget_usd" value="${p.monthly_budget_usd??""}" size="5"></td>
     <td>${st[p.id]?.healthy?'<span class="ok">ready</span>':'<span class="muted">off/unreachable</span>'}<div class="muted">spent $${st[p.id]?.month_spend_usd??0}</div></td></tr>`).join("")}
    </table><div class="row" style="margin-top:8px"><button class="b p" id="sv">Save order and settings</button></div></div>
+   <div class="card"><b>Front-door routing, last 7 days</b><p class="muted">${d.log.requests} requests, ${d.log.retries} retried with an override prefix (misroute labels). Tiers: ${Object.entries(d.tiers).map(([k,v])=>esc(k)+" = "+esc(v.join(", "))).join(" · ")}. Rules and tiers are set in settings.yaml (router).</p>
+   <table><tr><th>Rule</th><th>Provider</th><th>Requests</th><th>Retries</th><th>Tool errors</th><th>Cost $</th></tr>
+   ${d.log.groups.map(g=>`<tr><td>${esc(g.rule||"")}</td><td>${esc(g.provider||"")}</td><td>${g.n}</td><td>${g.retries}</td><td>${g.tool_errors}</td><td>${g.cost_usd}</td></tr>`).join("")}</table></div>
    <div class="card"><b>Provider keys</b><p class="muted">Stored encrypted. claude.oauth_token comes from <code>claude setup-token</code> (uses your Claude plan).</p>
    <div class="row"><select id="sk"><option>anthropic.api_key</option><option>openai.api_key</option><option>openrouter.api_key</option><option>claude.oauth_token</option><option>oauth.client_id</option><option>oauth.client_secret</option></select>
    <input id="sv2" type="password" class="grow"><button class="b" id="ss">Store</button></div></div>`;

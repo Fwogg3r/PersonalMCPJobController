@@ -16,6 +16,7 @@ One chat app for everything: any client that speaks the OpenAI chat API (desktop
 |---|---|
 | `pmjc` | The router's normal provider order |
 | `pmjc-local` | Private: local providers only, never falls back to the cloud |
+| `pmjc:<tier>` | Uses that tier's providers (`default`, `strong`, `local`, plus your own `router.tiers`); the tier wins over a provider with the same id |
 | `pmjc:<provider id>` | Forces that provider first (the rest stay as fallbacks); one entry per enabled provider |
 
 ## Conversations and threads
@@ -26,6 +27,21 @@ Each chat maps to a pmjc thread, so history, notes and approvals carry over (and
 2. Otherwise the first user message together with the first assistant reply. A chat with no reply yet is a new conversation and gets a new thread, so two chats that both open with "hi" stay separate.
 
 Either way the key is scoped to the token. Only the **last user message** is used as the request; earlier messages sent by the client are ignored, and the model gets the thread's own history (`front_door.history_turns`). The thread id is returned in `pmjc_thread_id` of non-streaming replies.
+
+## Routing (`router` in settings.yaml)
+
+Each request is routed in this order: an explicit choice (model id, or a rule with a `prefix` such as `/strong`, which is stripped from the request) beats the thread's sticky provider (chosen on its first routed turn), which beats the first matching other rule, which beats the `default` tier. Routing only orders providers; private, capabilities, budget, cooldown and health still filter, so it never widens the candidate set (a private thread asking for `/strong` stays local). Interactive requests (Discord, REST, CLI, `/v1`) never wait for a local host to start: it is started in the background and the next provider answers now.
+
+| key | default | |
+|---|---|---|
+| `tiers` | built in | `{name: [provider ids]}`, order = fallback. Built in: `default` (routing order), `strong` (non-local), `local` |
+| `route_rules` | `/strong`, `/local` prefixes | ordered; first match wins. Matchers: `prefix`, `keywords` (whole words), `surface` (discord, rest, cli, v1, job), `min_chars`, `has_image`; each gives a `tier` |
+| `sticky` | true | a thread keeps the provider chosen on its first routed turn |
+| `footer` | true | last line of an answer, e.g. `⟡ local-27b · rule: /strong · tools: web_search · $0.000`; stripped from history |
+| `footer_surfaces` | discord, v1 | REST and CLI JSON answers carry no footer |
+| `gpu_ignore_processes` | LM Studio, lms, llama, ollama | GPU load from these does not count as "busy" |
+
+Every routed request is logged (rule, tier, candidates, provider, fallbacks, turns, tool errors, cost); `pmjc routing --days N` summarises it and the dashboard's Routing tab shows it. A `/strong`-style prefix on a thread's next turn is recorded as `retry_of` the previous routed turn (a misroute label).
 
 ## Streaming
 

@@ -23,7 +23,7 @@ import logging
 import random
 import time
 
-from . import agent, config, creds, db, defang, executor, memory, registry, router
+from . import agent, config, creds, db, defang, executor, memory, registry, router, routing
 from .auth import Caller
 
 log = logging.getLogger("pmjc.discord_door")
@@ -225,7 +225,7 @@ class Door:
                                {"name": name, "auto_archive_duration": 1440})
             reply_ch = t["id"]
             new_thread = True
-        caller = Caller(f"discord:{user_id}", "remote", set(self.cfg.scopes))
+        caller = Caller(f"discord:{user_id}", "remote", set(self.cfg.scopes), surface="discord")
         prefs = self.prefs(reply_ch)
         trace = bool(prefs.get("trace", self.cfg.trace))
         caller.on_tool = lambda name, args, status: self._on_tool(reply_ch, trace, name, args, status)
@@ -258,6 +258,10 @@ class Door:
             footer += f" · watching ({', '.join(res['watches'])})"
         if res.get("cost_usd"):
             footer += f" · ${res['cost_usd']:.4f}"
+        if routing.footer_enabled("discord"):  # the routing footer replaces the plain provider line
+            footer = "\n-# " + routing.footer_line(res["provider"], res.get("routing"), res.get("cost_usd") or 0)
+            if res.get("watches"):
+                footer += f" · watching ({', '.join(res['watches'])})"
         for f in res.get("fell_back") or []:
             footer += f"\n-# fell back from {f[:150]}"
         quiet = bool(res.get("untrusted"))  # tainted answer: no link previews (flag SUPPRESS_EMBEDS)

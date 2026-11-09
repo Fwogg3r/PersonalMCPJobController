@@ -14,6 +14,8 @@ def api(home, monkeypatch):
     from fastapi.testclient import TestClient
     from pmjc import ask as ask_mod, auth, memory, openai_door, server
     openai_door._hits.clear()
+    from pmjc import config
+    st = config.load(); st.router.footer = False; config.save(st)  # footers are covered in test_routing.py
     calls = []
 
     async def fake_ask(caller, text, private=False, provider_order=None, thread_id=None, history_turns=0, extra_system=""):

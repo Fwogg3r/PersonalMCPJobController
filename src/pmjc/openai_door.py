@@ -17,7 +17,7 @@ from collections import defaultdict, deque
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from . import agent, config, db, memory
+from . import agent, config, db, memory, routing
 from .auth import Caller
 
 DDL = "CREATE TABLE IF NOT EXISTS door_threads (key TEXT PRIMARY KEY, thread_id TEXT, ts REAL)"
@@ -30,7 +30,8 @@ def _err(status: int, msg: str, kind: str = "invalid_request_error") -> JSONResp
 
 def model_list() -> list[str]:
     ids = ["pmjc", "pmjc-local"]
-    ids += [f"pmjc:{p.id}" for p in config.load().routing if p.enabled]
+    ids += [f"pmjc:{n}" for n, members in routing.tiers().items() if members]
+    ids += [f"pmjc:{p.id}" for p in config.load().routing if p.enabled and f"pmjc:{p.id}" not in ids]
     return ids
 
 
@@ -42,6 +43,9 @@ def resolve_model(model: str) -> tuple[bool, list[str] | None] | None:
         return True, None
     if model.startswith("pmjc:"):
         pid = model[5:]
+        tier = routing.tiers().get(pid)  # a tier name wins over a provider id
+        if tier:
+            return False, list(tier)
         ids = [p.id for p in config.load().routing if p.enabled]
         if pid not in ids:
             return None
@@ -58,7 +62,9 @@ def text_of(content) -> str:
 
 
 def _norm(s: str) -> str:
-    """Assistant text as the client will echo it back: progress lines dropped, whitespace collapsed, first 500 chars."""
+    """Assistant text as the client will echo it back: progress lines and the routing footer dropped, whitespace
+    collapsed, first 500 chars."""
+    s = routing.strip_footer(s)
     lines = [ln for ln in s.splitlines() if not re.fullmatch(r"\s*_calling .*\.\.\._\s*", ln)]
     return " ".join(" ".join(lines).split())[:500]
 
@@ -181,7 +187,8 @@ def register(app: FastAPI, bearer, need) -> None:
         key = conversation_key(c.name, body, request.headers, messages)
         tid = thread_for(key) if key else None
         first_user = next((text_of(m.get("content")) for m in messages if m.get("role") == "user"), "")
-        caller = Caller(f"ask:{c.name}", "remote", set(c.scopes))
+        caller = Caller(f"ask:{c.name}", "remote", set(c.scopes), surface="v1")
+        caller.tier_hint = model[5:] if model.startswith("pmjc:") and model[5:] in routing.tiers() else ""
         queue: asyncio.Queue = asyncio.Queue()
         stream = bool(body.get("stream"))
         if stream and fd.stream_progress:
@@ -195,7 +202,9 @@ def register(app: FastAPI, bearer, need) -> None:
             res = await ask_mod.ask(caller, text, private=private, provider_order=order, thread_id=tid,
                                     history_turns=fd.history_turns)
             answer = res["answer"] + approvals_block(res["thread_id"], started)
-            thread_store(key or pair_key(c.name, first_user, answer), res["thread_id"])
+            thread_store(key or pair_key(c.name, first_user, answer), res["thread_id"])  # (_norm ignores the footer)
+            if routing.footer_enabled("v1"):
+                answer += "\n\n" + routing.footer_line(res.get("provider", ""), res.get("routing"), res.get("cost_usd") or 0)
             usage = res.get("usage") or {}
             pt, ct = int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0))
             return {"answer": answer, "thread_id": res["thread_id"],
