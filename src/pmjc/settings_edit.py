@@ -834,3 +834,133 @@ def api_view(a: dict) -> dict | None:
         return None
     return {"title": v["title"], "badge": v["badge"], "two_step": v["two_step"], "surface": v["surface"],
             "reason": v["reason"], "lines": [{"path": ln["path"], "text": ln["text"]} for ln in v["lines"]]}
+
+
+# --- owner-typed chat commands (/settings, /set, /profile, /revert): no model involved -----------------------------
+def parse_set_args(arg: str) -> dict:
+    """`/set a.b=1 c=[x, y]` or `/set a.b 1`: values are YAML. Returns {path: value}; raises SettingsDenied."""
+    arg = arg.strip()
+    if not arg:
+        raise SettingsDenied("usage: /set <path> <value>   or   /set a=1 b=2   (see /settings for the paths)")
+    pairs = []
+    if re.match(r"^[A-Za-z_][\w.\[\]-]*=", arg):
+        for p in re.split(r"\s+(?=[A-Za-z_][\w.\[\]-]*=)", arg):
+            k, _, v = p.partition("=")
+            pairs.append((k.strip(), v.strip()))
+    else:
+        k, _, v = arg.partition(" ")
+        pairs.append((k.strip(), v.strip()))
+    out: dict[str, Any] = {}
+    for k, v in pairs:
+        if not v:
+            raise SettingsDenied(f"no value for `{_safe(k, 60)}`")
+        try:
+            out[k] = yaml.safe_load(v)
+        except yaml.YAMLError as e:
+            raise SettingsDenied(f"can't read the value for `{_safe(k, 60)}` as YAML") from e
+    return out
+
+
+def settings_text(path: str | None = None) -> str:
+    r = get(path or None)
+    if "error" in r:
+        return r["error"]
+    lines = ["**Settings chat may change** (`/set <path> <value>`)"]
+    for p, d in r["settings"].items():
+        lines.append(f"- {_code(p)} = {_code(fmt(d['value']))} ({d['risk']}; {d['change']})")
+    if "providers" in r:
+        lines.append("\n**Providers:** " + ", ".join(
+            f"{_code(p['id'])} ({p['trust']}{'' if p['enabled'] else ', off'})" for p in r["providers"]))
+        lines.append("**Profiles:** " + profiles_line(r["profiles"]) + " (`/profile <name>`)")
+        if r.get("backups"):
+            lines.append("**Backups:** `/revert` lists them.")
+    return "\n".join(lines)
+
+
+def profiles_line(prof: list[dict]) -> str:
+    return ", ".join(f"{_code(clean(p['name'], 30))}{' (active)' if p.get('active') else ''}{'' if p.get('valid') else ' (invalid)'}"
+                     for p in prof) or "none; the owner defines them in settings.yaml"
+
+
+def _owner_ok(caller) -> str | None:
+    if not caller.can("actions"):
+        return "changing settings needs a token with the `actions` scope (or admin)"
+    if caller.untrusted:
+        return "this conversation read third-party content; start a new chat"
+    return None
+
+
+async def _approval_reply(caller, tool: str, args: dict) -> str:
+    from . import executor
+    from .chat_commands import approval_line
+    res = await executor.request_approval(caller, tool, args, "typed by the owner as a chat command")
+    row = db.q("SELECT id, tool, args, reason FROM approvals WHERE id=?", res["approval_id"])[0]
+    return (discord_text(row) + "\n" + approval_line({"id": row["id"], "tool": tool, "reason": ""})
+            + "\nNothing changes until you approve.")
+
+
+def _owner_args(caller, extra: dict) -> dict:
+    out = dict(extra)
+    out.update({"reason": "typed by the owner as a chat command", "_base_hash": file_hash(),
+                "_surface": str(caller.surface or "v1")[:20]})
+    return out
+
+
+async def owner_command(name: str, arg: str, caller, thread_id: str | None = None) -> str:
+    """Run one owner command. off-lower /set applies at once (lock, compare-and-swap, backup, audit marked as an owner
+    command); routing/cost /set, /profile and /revert reply with an approval (diff plus signed links)."""
+    why = _owner_ok(caller)
+    if why:
+        return why
+    try:
+        if name == "settings":
+            return settings_text(arg or None)
+        s = config.load()
+        if name == "set":
+            ch = check_chat(s, parse_set_args(arg))
+            changes = {c.path: c.new for c in ch}
+            if set(risk_of(ch)) <= {OFF_LOWER}:
+                res = apply("set", changes, file_hash())
+                _audit_direct(caller, thread_id, res)
+                return ("**Applied** (backup `" + res["backup_id"] + "`)\n"
+                        + "\n".join(f"{_code(p)}: {_code(fmt(d['old']))} → {_code(fmt(d['new']))}" for p, d in res["diff"].items())
+                        + "\n`/revert " + res["backup_id"] + "` undoes it (with approval).")
+            args = _owner_args(caller, {"changes": changes, "_old": {c.path: c.old for c in ch}, "_risk": risk_of(ch)})
+            return await _approval_reply(caller, TOOL_SET, args)
+        if name == "profile":
+            if not arg:
+                return "**Profiles:** " + profiles_line(profiles_summary(s))
+            ch = profile_changes(s, arg.strip())
+            if not ch:
+                return f"Profile {_code(clean(arg, 40))} already matches the current settings."
+            args = _owner_args(caller, {"name": arg.strip(), "_changes": {c.path: c.new for c in ch},
+                                        "_old": {c.path: c.old for c in ch}, "_risk": risk_of(ch)})
+            return await _approval_reply(caller, TOOL_PROFILE, args)
+        if name == "revert":
+            if not arg:
+                bs = list_backups()[:10]
+                if not bs:
+                    return "No backups yet."
+                return "**Backups** (newest first; `/revert <id>`):\n" + "\n".join(f"- `{b['backup_id']}`" for b in bs)
+            bid = arg.strip().split()[0]
+            bsha, bset = load_backup(bid)
+            ch = revert_changes(s, bset)
+            if not ch:
+                return "That backup matches the current settings on every path chat can change."
+            args = _owner_args(caller, {"backup_id": bid, "_backup_sha": bsha, "_changes": {c.path: c.new for c in ch},
+                                        "_old": {c.path: c.old for c in ch}, "_risk": risk_of(ch)})
+            return await _approval_reply(caller, TOOL_REVERT, args)
+    except SettingsDenied as e:
+        return f"Refused: {e}"
+    except SettingsError as e:
+        return f"Not applied: {e}"
+    return "unknown settings command"
+
+
+def _audit_direct(caller, thread_id: str | None, res: dict) -> None:
+    h = hashlib.sha256(json.dumps(res["diff"], sort_keys=True, default=str).encode()).hexdigest()
+    db.audit(caller.name, TOOL_SET, h, "settings_applied",
+             f"owner command base={res['base_hash'][:12]} new={res['new_hash'][:12]} by={caller.name} "
+             f"surface={caller.surface or 'v1'} thread={thread_id or ''} backup={res['backup_id']}")
+    for p, d in res["diff"].items():
+        db.audit(caller.name, TOOL_SET, h, "settings_diff", f"{p}: {fmt(d['old'])} -> {fmt(d['new'])}")
