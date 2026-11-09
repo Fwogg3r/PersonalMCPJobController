@@ -17,7 +17,7 @@ from collections import defaultdict, deque
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from . import agent, config, db, memory, routing
+from . import agent, chat_commands, config, db, memory, routing
 from .auth import Caller
 
 DDL = "CREATE TABLE IF NOT EXISTS door_threads (key TEXT PRIMARY KEY, thread_id TEXT, ts REAL)"
@@ -203,8 +203,24 @@ def register(app: FastAPI, bearer, need) -> None:
                 await queue.put(f"_calling {name}..._\n\n")
             caller.on_tool = on_tool
         started = time.time()
+        cmd = chat_commands.parse(text) if fd.chat_commands else None
+
+        async def command_work() -> dict:
+            """A chat command: answered by pmjc, no model run. Recorded in the thread as a `command` item, which the
+            model's history leaves out."""
+            ctx = chat_commands.Ctx(caller, c.name, tid, private=private, model=model)
+            answer = await chat_commands.run(cmd[0], cmd[1], ctx)
+            old = tid
+            if old and memory.thread_exists(old):
+                memory.thread_add(old, "command", text[:300], author=c.name, trust=memory.trust_of(caller))
+            if ctx.thread_id and (ctx.new_thread or ctx.created):
+                thread_store(key or pair_key(c.name, first_user, answer), ctx.thread_id)
+            return {"answer": answer, "thread_id": ctx.thread_id,
+                    "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}
 
         async def work() -> dict:
+            if cmd:
+                return await command_work()
             from . import ask as ask_mod
             res = await ask_mod.ask(caller, text, private=private, provider_order=order, thread_id=tid,
                                     history_turns=fd.history_turns)

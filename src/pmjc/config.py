@@ -151,6 +151,7 @@ class McpServerConfig(BaseModel):
 class FrontDoorConfig(BaseModel):
     """OpenAI-compatible endpoint (/v1/models, /v1/chat/completions) for any chat client; see docs/FRONT_DOOR.md."""
     enabled: bool | None = None  # None = on (every request needs a token anyway); false turns the endpoints off
+    chat_commands: bool = True  # /help, /tools, /connectors, /approvals, /status, /model, /threads, /new answered by pmjc (no model)
     stream_progress: bool = True  # stream short "_calling tool..._" lines before the answer
     history_turns: int = 6  # earlier request/answer pairs from the pmjc thread passed back to the model
     max_body_bytes: int = 1_000_000
