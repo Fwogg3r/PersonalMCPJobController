@@ -5,11 +5,11 @@ import os
 import sys
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from platformdirs import user_data_dir
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 def default_home() -> Path:
@@ -100,6 +100,39 @@ class DiscordDoorConfig(BaseModel):
     # and added to the pmjc thread that messaged that person; never acted on
 
 
+class McpToolOverride(BaseModel):
+    """Per-tool changes to the safe defaults of a mounted MCP tool (settings.yaml only)."""
+    scope: Literal["read", "act"] | None = None
+    untrusted_output: bool | None = None
+    egress: bool | None = None
+
+
+class McpServerConfig(BaseModel):
+    """An existing MCP server mounted as a connector (see pmjc.mcp_connector). Edited in settings.yaml only."""
+    id: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,31}$")
+    transport: Literal["stdio", "http"] = "stdio"
+    command: str | None = None  # stdio: argv[0], never run through a shell
+    args: list[str] = Field(default_factory=list)
+    url: str | None = None  # http: streamable HTTP endpoint
+    bearer_credential: str | None = None  # http: credential-store key of a bearer token (default mcp.<id>.bearer)
+    env: list[str] = Field(default_factory=list)  # names read from the credential store as mcp.<id>.<NAME>
+    enabled: bool = True
+    tools: list[str] | None = None  # allowlist of the server's tool names; None = all
+    exclude: list[str] = Field(default_factory=list)
+    overrides: dict[str, McpToolOverride] = Field(default_factory=dict)  # keyed by the server's tool name
+    timeout: float = 20.0  # seconds to connect and list tools
+    call_timeout: float = 60.0
+    max_output: int = 20000
+
+    @model_validator(mode="after")
+    def _check(self):
+        if self.transport == "stdio" and not self.command:
+            raise ValueError(f"mcp server {self.id}: stdio needs `command`")
+        if self.transport == "http" and not (self.url or "").startswith(("http://", "https://")):
+            raise ValueError(f"mcp server {self.id}: http needs an http(s) `url`")
+        return self
+
+
 class Settings(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8770
@@ -132,6 +165,8 @@ class Settings(BaseModel):
     audit_retention_days: int = 30
     thread_retention_days: int = 90  # closed threads older than this are deleted
     notify_channels: list[str] = Field(default_factory=list)  # connector ids used for approvals/alerts, in order
+    # Existing MCP servers mounted as connectors. Only settings.yaml can change this, never the API.
+    mcp_servers: list[McpServerConfig] = Field(default_factory=list)
     discord_door: DiscordDoorConfig = Field(default_factory=DiscordDoorConfig)
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import json
 import logging
 from typing import Any
 
@@ -125,7 +126,29 @@ def with_first_call_header(result: Any, key: str, tool_name: str) -> Any:
     return {"pmjc_context_header": header, "result": result}
 
 
+class _SchemaTool(Tool):
+    """A tool whose JSON schema comes from elsewhere (mounted MCP servers); arguments are passed through as given."""
+    handler: Any = None
+
+    async def run(self, arguments: dict[str, Any]):
+        from fastmcp.tools import ToolResult
+        res = await self.handler(**arguments)
+        return ToolResult(content=res if isinstance(res, str) else json.dumps(res, default=str))
+
+
 def _wrap(t: registry.ToolSpec, stdio: bool) -> Tool:
+    if t.schema is not None:
+        async def call(**kwargs: Any) -> Any:
+            try:
+                res = await executor.call_tool(_current_caller(stdio), t.name, kwargs)
+                return with_first_call_header(res, _session_key(stdio), t.name)
+            except (executor.Denied, PermissionError) as e:
+                raise ToolError(str(e)) from None
+        return _SchemaTool(name=t.name, description=t.doc or t.name, parameters=registry.tool_json_schema(t),
+                           tags={t.mcp_scope, t.connector}, handler=call,
+                           annotations={"readOnlyHint": t.scope != "act", "destructiveHint": t.scope == "act",
+                                        "openWorldHint": t.egress or t.untrusted_output},
+                           auth=None if stdio else _scope_check(t.mcp_scope))
     params = [p for p in inspect.signature(t.fn).parameters.values() if not p.name.startswith("_")]
 
     async def fn(**kwargs: Any) -> Any:

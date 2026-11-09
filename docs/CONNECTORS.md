@@ -117,3 +117,25 @@ Pick a search backend under `connectors.web` in settings (`web_fetch` works with
 - **Brave Search API.** Create a key at <https://api.search.brave.com/>, set `backend: brave`, then enter the key yourself with `uv run pmjc auth set web` (or the dashboard). It goes to the credential store, never to a file.
 
 Other options: `blocked_domains` (list; subdomains included), `allow_private` (default false: addresses that resolve to loopback, private, link-local or similar ranges are refused after DNS resolution, redirects included), `max_bytes` (download cap, default 2000000). Fetching is plain HTTP with no JavaScript or logins; use `browser_read` for those.
+
+## Mounting existing MCP servers
+
+Reuse the MCP servers other people wrote (files, GitHub, Notion, calendars...). Add them to `settings.yaml` (edit the file; the API can't):
+
+```yaml
+mcp_servers:
+  - id: files                      # tools become files__<tool>
+    transport: stdio               # stdio | http
+    command: npx                   # argv, never a shell
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/share"]
+    env: [SOME_TOKEN]              # optional: read from the credential store as mcp.files.SOME_TOKEN
+    tools: [read_text_file, list_directory]   # optional allowlist; `exclude: [...]` removes tools
+    overrides:                     # optional per-tool changes to the safe defaults
+      list_directory: {scope: read, egress: false}
+  - id: remote
+    transport: http
+    url: https://example.com/mcp
+    bearer_credential: mcp.remote.bearer      # credential-store key (the default); set it with `pmjc auth secret`
+```
+
+Safe defaults: every tool is `act` (needs approval) unless the server marks it `readOnlyHint: true`, and every tool is `untrusted_output` and `egress` unless you override it. `uv run pmjc mcp list` shows each server's health, tools and effective flags. See DECISIONS.md.

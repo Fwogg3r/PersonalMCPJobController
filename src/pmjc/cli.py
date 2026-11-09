@@ -52,11 +52,40 @@ def serve(host: Optional[str] = None, port: Optional[int] = None):
     server.run(host, port)
 
 
-@app.command()
-def mcp():
+mcp_app = typer.Typer(help="Run pmjc as an MCP server over stdio (no subcommand), or inspect mounted MCP servers.",
+                      invoke_without_command=True)
+app.add_typer(mcp_app, name="mcp")
+
+
+@mcp_app.callback()
+def mcp(ctx: typer.Context):
     """Run as an MCP server over stdio (for Claude Desktop, Claude Code, Cursor, ... on this machine)."""
-    from . import mcp_server
-    mcp_server.build(stdio=True).run(transport="stdio", show_banner=False)
+    if ctx.invoked_subcommand is None:
+        from . import mcp_server
+        mcp_server.build(stdio=True).run(transport="stdio", show_banner=False)
+
+
+@mcp_app.command("list")
+def mcp_list():
+    """Existing MCP servers mounted from settings.yaml (`mcp_servers:`): health, tools, effective scope and flags."""
+    from . import config, registry
+    from .mcp_connector import McpConnector
+    reg = registry.reload()
+    mounted = [c for c in reg.connectors.values() if isinstance(c, McpConnector)]
+    configured = config.load().mcp_servers
+    if not configured:
+        typer.echo("no mcp_servers in settings.yaml (see docs/CONNECTORS.md, 'Mounting MCP servers')")
+    for e in configured:
+        if not e.enabled:
+            typer.echo(f"{e.id}  [{e.transport}]  disabled")
+    for c in mounted:
+        h = asyncio.run(c.health())
+        typer.echo(f"{c.id}  [{c.entry.transport}]  {'OK' if h.ok else 'FAILED'}  {h.detail}")
+        for meta, fn in c.tools():
+            typer.echo(f"    {meta['name']:40} scope={meta['scope']:4} untrusted_output={meta['untrusted_output']} "
+                       f"egress={meta['egress']}")
+    from . import mcp_connector
+    mcp_connector.shutdown()
 
 
 @app.command()
