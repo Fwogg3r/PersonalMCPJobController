@@ -106,3 +106,25 @@ Set `limitations` (what the connector can't do, prerequisites such as where an i
 4. Optional settings under `connectors.ebay`: `marketplace` (default `EBAY_US`), `sandbox` (default false).
 
 `ebay_search` takes a list of queries (max 10) so a whole watch fits in one call; after a run reads listings it cannot make another egress call.
+
+## Mounting existing MCP servers
+
+Reuse the MCP servers other people wrote (files, GitHub, Notion, calendars...). Add them to `settings.yaml` (edit the file; the API can't):
+
+```yaml
+mcp_servers:
+  - id: files                      # tools become files__<tool>
+    transport: stdio               # stdio | http
+    command: npx                   # argv, never a shell
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/share"]
+    env: [SOME_TOKEN]              # optional: read from the credential store as mcp.files.SOME_TOKEN
+    tools: [read_text_file, list_directory]   # optional allowlist; `exclude: [...]` removes tools
+    overrides:                     # optional per-tool changes to the safe defaults
+      list_directory: {scope: read, egress: false}
+  - id: remote
+    transport: http
+    url: https://example.com/mcp
+    bearer_credential: mcp.remote.bearer      # credential-store key (the default); set it with `pmjc auth secret`
+```
+
+Safe defaults: every tool is `act` (needs approval) unless the server marks it `readOnlyHint: true`, and every tool is `untrusted_output` and `egress` unless you override it. `uv run pmjc mcp list` shows each server's health, tools and effective flags. See DECISIONS.md.

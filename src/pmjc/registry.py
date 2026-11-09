@@ -39,6 +39,7 @@ class ToolSpec:
     untrusted_output: bool
     egress: bool = False
     raw_doc: str = ""  # the docstring alone, without the connector's limits (used by compact schemas)
+    schema: dict | None = None  # JSON schema passed through as-is (mounted MCP tools); else derived from the signature
 
     @property
     def mcp_scope(self) -> str:
@@ -97,6 +98,12 @@ class Registry:
             except Exception as e:
                 self.errors[f.name] = repr(e)
 
+        try:
+            from .mcp_connector import mount_classes
+            classes += mount_classes()  # existing MCP servers from settings.yaml
+        except Exception as e:
+            self.errors["mcp_servers"] = repr(e)
+
         disabled = set(config.load().disabled_connectors)
         for cls in classes:
             if cls.platforms and sys.platform not in cls.platforms:
@@ -124,7 +131,8 @@ class Registry:
                 seen.add(meta["name"])
                 out.append(ToolSpec(meta["name"], c.id, meta["scope"], fn, with_limits(inspect.getdoc(fn) or "", c),
                                     meta["untrusted_output"], meta.get("egress", False),
-                                    raw_doc=inspect.getdoc(fn) or ""))
+                                    raw_doc=inspect.getdoc(fn) or "",
+                                    schema=getattr(fn, "__pmjc_schema__", None)))
         return out
 
     def tool(self, name: str) -> ToolSpec | None:
@@ -158,6 +166,8 @@ def reload() -> Registry:
 
 def tool_json_schema(t: ToolSpec) -> dict[str, Any]:
     """JSON schema for a tool's parameters, derived from its signature (shared by REST and exports)."""
+    if t.schema is not None:
+        return json.loads(json.dumps(t.schema))
     from pydantic import TypeAdapter, create_model
     fields = {}
     for p in inspect.signature(t.fn).parameters.values():
