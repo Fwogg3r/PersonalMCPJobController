@@ -139,3 +139,25 @@ mcp_servers:
 ```
 
 Safe defaults: every tool is `act` (needs approval) unless the server marks it `readOnlyHint: true`, and every tool is `untrusted_output` and `egress` unless you override it. `uv run pmjc mcp list` shows each server's health, tools and effective flags. See DECISIONS.md.
+
+
+### Example: a notes vault (Obsidian or any Markdown folder)
+
+Obsidian keeps notes as plain Markdown files, so the official filesystem server is enough. Pin its version, and mark the read tools as non-egress (reading a local file sends nothing out), so a run can still search the web after reading a note:
+
+```yaml
+mcp_servers:
+  - id: notes
+    transport: stdio
+    command: npx            # on Windows use the full path to npx.cmd
+    args: ["-y", "@modelcontextprotocol/server-filesystem@2.2.0", "/path/to/vault"]
+    overrides:
+      read_text_file: {egress: false}
+      read_multiple_files: {egress: false}
+      list_directory: {egress: false}
+      directory_tree: {egress: false}
+      search_files: {egress: false}
+      get_file_info: {egress: false}
+```
+
+Write, edit, move and copy stay `act` tools, so every change to a note needs your approval. Check the result with `pmjc mcp list`.
