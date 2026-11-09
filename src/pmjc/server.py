@@ -279,7 +279,9 @@ def create_app() -> FastAPI:
     # ---- model routing (admin)
     @app.get("/api/routing", tags=["admin"])
     async def routing(_: Caller = Depends(admin_caller)):
-        return {"providers": [p.model_dump() for p in config.load().routing], "status": await router.status()}
+        from . import routing as routing_mod
+        return {"providers": [p.model_dump() for p in config.load().routing], "status": await router.status(),
+                "log": routing_mod.summary(7), "tiers": routing_mod.tiers()}
 
 
     @app.put("/api/routing", tags=["admin"])

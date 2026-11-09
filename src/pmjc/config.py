@@ -156,6 +156,33 @@ class FrontDoorConfig(BaseModel):
     keepalive_seconds: float = 10.0  # SSE comment interval while waiting (stops mobile clients timing out)
 
 
+class RouteRule(BaseModel):
+    """One front-door routing rule: every matcher given must match; the first matching rule wins (see pmjc.routing)."""
+    name: str = ""  # label shown in the footer and routing log (default: the prefix, else "rule N")
+    tier: str
+    prefix: str | None = None  # e.g. "/strong": the request starts with it (then it is stripped and counts as an override)
+    keywords: list[str] = Field(default_factory=list)  # any of these as a whole word, case-insensitive
+    surface: list[str] | str | None = None  # discord | rest | cli | v1 | job
+    min_chars: int = 0
+    has_image: bool | None = None  # placeholder: requests carry no images yet
+
+
+def default_route_rules() -> list[RouteRule]:
+    return [RouteRule(prefix="/strong", tier="strong"), RouteRule(prefix="/local", tier="local")]
+
+
+class RouterConfig(BaseModel):
+    """Front-door routing and router tuning. Everything has a generic default that works without configuration."""
+    gpu_ignore_processes: list[str] = Field(default_factory=lambda: ["LM Studio", "lms", "llama", "ollama"])
+    # Named provider lists; the order is the fallback. Built in (derived from `routing`): default = the routing order,
+    # strong = the non-local providers, local = the local providers. Entries here replace or add tiers.
+    tiers: dict[str, list[str]] = Field(default_factory=dict)
+    route_rules: list[RouteRule] = Field(default_factory=default_route_rules)
+    sticky: bool = True  # a thread keeps the provider chosen on its first routed turn
+    footer: bool = True  # last line of an answer: provider, rule, tools, cost
+    footer_surfaces: list[str] = Field(default_factory=lambda: ["discord", "v1"])
+
+
 class Settings(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8770
@@ -196,6 +223,7 @@ class Settings(BaseModel):
     mcp_servers: list[McpServerConfig] = Field(default_factory=list)
     discord_door: DiscordDoorConfig = Field(default_factory=DiscordDoorConfig)
     front_door: FrontDoorConfig = Field(default_factory=FrontDoorConfig)
+    router: RouterConfig = Field(default_factory=RouterConfig)
 
 
 _lock = threading.Lock()

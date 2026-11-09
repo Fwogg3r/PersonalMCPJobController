@@ -93,7 +93,7 @@ async def run(prompt: str, caller: Caller, tools: list[ToolSpec], need: router.N
     tried = []
     tools = _with_paging(caller, tools)
     for p in await router.candidates(need):
-        if not await router.healthy(p):  # cheap to re-check; no cooldown (a model may be loaded a minute later)
+        if not await router.usable(p, need):  # cheap to re-check; no cooldown (a model may be loaded a minute later)
             tried.append(f"{p.id}: unavailable")
             continue
         try:

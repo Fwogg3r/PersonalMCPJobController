@@ -266,7 +266,7 @@ async def test_autocomplete_tools_and_providers(door):
 async def test_model_private_and_trace_prefs_reach_ask(door, monkeypatch):
     from pmjc import agent, config, executor
     s = config.load()
-    s.routing.append(config.ProviderConfig(id="prov1", kind="openai_compat", base_url="http://x"))
+    s.routing.append(config.ProviderConfig(id="prov1", kind="openai_compat", base_url="http://x", trust="local"))
     config.save(s)
     seen = {}
 
@@ -408,3 +408,16 @@ async def test_clean_answers_keep_links_and_embeds(door, monkeypatch):
     await door.on_message(msg("hi", channel="dm6", guild=None))
     (path, body), = door.api.sent("dm6")
     assert "flags" not in body and "https://example.org/a?x=1" in body["content"]
+
+
+async def test_answer_carries_routing_footer(door):
+    from pmjc import config, memory, routing
+    await door.on_message(msg("/strong hello"))
+    content = door.api.sent("thr1")[0][1]["content"]
+    last = content.splitlines()[-1]
+    assert last.startswith("-# " + routing.FOOTER_MARK) and "fake-model" in last and "rule: /strong" in last
+    tid = door.thread_for("thr1")
+    assert routing.FOOTER_MARK not in str(memory.thread_get(tid))  # stored thread keeps the clean answer
+    s = config.load(); s.router.footer = False; config.save(s)
+    await door.on_message(msg("again", channel="thr1"))
+    assert routing.FOOTER_MARK not in door.api.sent("thr1")[-1][1]["content"]
