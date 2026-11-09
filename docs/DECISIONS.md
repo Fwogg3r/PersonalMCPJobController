@@ -90,6 +90,13 @@ The numbers below are one example setup (a 27B 4-bit model on a 24 GB card); kee
 - **Shell-command limits:** a timeout and an output cap, both set in config. The model may ask for a different timeout or cap in the request, shown to the owner in the approval. The full command is always shown and logged, and it runs only after approval.
 - **Public by default:** the repo ships generic, publicly usable defaults. Settings specific to the owner (configs, their bots and so on) go in the owner's private dev-tools repo, not here.
 
+## Approvals notify the requesting model (owner request, 2026-11-09)
+- **Problem:** an external model calling pmjc over MCP got `pending_approval` and its turn ended; after the owner approved, nothing reached that model and the owner had to prompt it again.
+- **Decision:** inline wait, then a wait tool. An act call from an MCP client waits up to `approval_wait_seconds` (default 120) and returns the real outcome; still pending, it returns a `next` instruction to call `pmjc_approval_wait`. The outcome is also marked delivered, and `continue_after_approval` then only writes a thread note, so the owner doesn't get a second follow-up for the same decision. If nobody was waiting (the client gave up), today's follow-up (pmjc model run + notify) still runs.
+- **Considered instead:** (a) push the outcome to the client through MCP notifications or sampling (client support is patchy, and the turn may be over); (b) rely on the model polling `pmjc_approval_status` (models stop instead of polling); (c) a longer inline wait (MCP clients commonly time out tool calls after 60 to 120 s, so the inline default stays at 120 and the wait tool can be called repeatedly).
+- **Scope:** only the requesting caller or an admin can wait on or see an approval (`pmjc_approval_status` is tightened the same way). The wait tool is withheld from pmjc's own ask/job/watch runs, which keep their own continuation.
+- **Cross-process:** the HTTP server may handle the decision while the stdio process holds the wait, so the waiter also polls the database (`approval_poll_seconds`, default 2).
+
 ## Declared browser reads (phase4/s)
 - **Problem:** `browser_read` is `egress` (the URL leaves the machine), so after one page of untrusted content a run can't read a second one.
 - **Decision:** a job file or watch spec may declare `read_urls` (exact URLs) and/or `read_sites` (domains, subdomains included). The executor lets `browser_read` and `browser_extract` through after taint when the `url` argument matches that list, because the owner fixed the URL, not the model. Everything else keeps the egress rule. The browser connector's `allowed_domains` check still applies on top.
