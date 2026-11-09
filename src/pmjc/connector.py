@@ -125,6 +125,9 @@ class Connector:
     # both to every tool description so a model with no other context sees them in the tool list.
     limitations: str = ""
     native_alternatives: str = ""
+    # Optional words and phrases in a request that make a `tool_mode: select` provider send this connector's tools in
+    # full ("lights", "look up"); the id, name and tool names are matched too (see tool_select.py).
+    aliases: list[str] = []
 
     def __init__(self) -> None:
         self._http: httpx.AsyncClient | None = None

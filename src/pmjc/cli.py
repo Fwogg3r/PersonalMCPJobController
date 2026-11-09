@@ -254,9 +254,11 @@ def ask(text: str, private: bool = typer.Option(False, help="local models only")
 
 
 @tools_app.command("size")
-def tools_size(provider: Optional[str] = typer.Option(None, "--provider", help="provider id (shows its schema_mode)")):
-    """Size of the tool definitions ask() sends, in full and compact schema mode (~tokens = chars / 4)."""
-    from . import agent, ask as ask_mod, auth, config
+def tools_size(provider: Optional[str] = typer.Option(None, "--provider", help="provider id (shows its schema_mode)"),
+               request: str = typer.Option("what's the weather", "--request", help="sample request for tool_mode select")):
+    """Size of the tool definitions ask() sends, in full and compact schema mode, and for tool_mode select with a
+    sample request (system prompt briefs included; ~tokens = chars / 4)."""
+    from . import agent, ask as ask_mod, auth, config, tool_select
     prov = None
     if provider:
         prov = next((p for p in config.load().routing if p.id == provider), None)
@@ -269,6 +271,17 @@ def tools_size(provider: Optional[str] = typer.Option(None, "--provider", help="
         schema, system = agent.tool_payload(p, tools, "", "openai")
         chars = len(json.dumps(schema, separators=(",", ":"))) + len(system)
         out[mode] = {"chars": chars, "approx_tokens": chars // 4}
+    for mode in ("full", "compact"):  # tool_mode select on top of each schema mode, for the sample request
+        p = config.ProviderConfig(id="size", kind="openai_compat", schema_mode=mode, tool_mode="select")
+        caller = auth.Caller("ask:cli", "remote", {"sources", "jobs"})
+        sel = tool_select.begin(p, caller, tools, request)
+        if sel is None:
+            continue
+        schema, system = agent.tool_payload(p, sel.tools(), sel.briefs(), "openai", True)
+        chars = len(json.dumps(schema, separators=(",", ":"))) + len(system)
+        out[f"select+{mode}"] = {"chars": chars, "approx_tokens": chars // 4, "request": request,
+                                 "loaded": sorted(sel.loaded), "briefs": len(sel.groups) - len(sel.loaded),
+                                 "tools_sent": len(sel.tools())}
     if prov:
         out["provider"] = {"id": prov.id, "schema_mode": prov.schema_mode}
     _out(out)

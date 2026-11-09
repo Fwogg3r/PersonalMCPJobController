@@ -16,7 +16,7 @@ from pathlib import Path
 
 import httpx
 
-from . import auth, config, creds, db, executor, memory, registry, results, router
+from . import auth, config, creds, db, executor, memory, registry, results, router, tool_select
 from .auth import Caller
 from .config import ProviderConfig
 from .registry import ToolSpec
@@ -69,10 +69,16 @@ async def _tool(caller: Caller, name: str, args: dict, cap: int = MAX_RESULT_CHA
             args = {**args, "max_chars": min(int(args.get("max_chars") or cap), cap)}
         except (TypeError, ValueError):
             args = {**args, "max_chars": cap}
+    sel = getattr(caller, "tool_select", None)  # tool_mode select: a tool whose schema wasn't sent still runs, checked
+    if sel is not None:
+        early = sel.precheck(name, args)
+        if early:
+            return early
     try:
         res = await executor.call_tool(caller, name, args)
     except Exception as e:
-        return f"ERROR: {type(e).__name__}: {e}"
+        hint = sel.schema_hint(name) if sel is not None and isinstance(e, (TypeError, ValueError)) else ""
+        return f"ERROR: {type(e).__name__}: {e}{hint}"
     return _clip(res, caller, name, cap)
 
 
@@ -140,11 +146,14 @@ def limits_block(tools: list[ToolSpec]) -> str:
     return ("\n\nLimits of the connectors you have tools for:\n" + "\n".join(lines)) if lines else ""
 
 
-def tool_payload(p: ProviderConfig, tools: list[ToolSpec], system: str, fmt: str) -> tuple[list[dict], str]:
-    """Tool definitions in the provider's wire format, plus the system prompt (compact mode appends the limits)."""
+def tool_payload(p: ProviderConfig, tools: list[ToolSpec], system: str, fmt: str,
+                 ordered: bool = False) -> tuple[list[dict], str]:
+    """Tool definitions in the provider's wire format, plus the system prompt (compact mode appends the limits).
+    `ordered`: keep the given order (tool_mode select has already put the tools in its stable order)."""
     compact = p.schema_mode == "compact"
     if compact:
-        tools = sorted(tools, key=lambda t: (t.connector, t.name))
+        if not ordered:
+            tools = sorted(tools, key=lambda t: (t.connector, t.name))
         system = system + limits_block(tools)
         desc, params = registry.compact_tool_doc, registry.compact_tool_schema
     else:
@@ -227,9 +236,25 @@ def _write_summary(caller: Caller, summary: str) -> None:
         log.warning("could not write the summary to the thread", exc_info=True)
 
 
+def _select_enter(p: ProviderConfig, prompt, caller, tools, system):
+    """tool_mode select: the run's tools become core + chosen connectors, and the system prompt lists the rest."""
+    sel = tool_select.begin(p, caller, tools, prompt)
+    if sel is None:
+        return tools, system, False
+    return sel.tools(), system + sel.briefs(), True
+
+
 # --- OpenAI-compatible (LM Studio, Ollama, OpenAI, OpenRouter, ...) --------------------------------------
 async def _openai(p: ProviderConfig, prompt, caller, tools, system, max_turns) -> Result:
-    schema, system = tool_payload(p, tools, system, "openai")
+    tools, system, ordered = _select_enter(p, prompt, caller, tools, system)
+    try:
+        return await _openai_loop(p, prompt, caller, tools, system, max_turns, ordered)
+    finally:
+        tool_select.end(caller)
+
+
+async def _openai_loop(p: ProviderConfig, prompt, caller, tools, system, max_turns, ordered) -> Result:
+    schema, system = tool_payload(p, tools, system, "openai", ordered)
     msgs = [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
     headers = {"Authorization": f"Bearer {router.api_key(p)}"} if p.credential else {}
     cost = 0.0
@@ -272,6 +297,11 @@ async def _openai(p: ProviderConfig, prompt, caller, tools, system, max_turns) -
                     if spec is not None and spec.scope == "act":
                         ledger.append(f"- {name}({json.dumps(args, default=str)[:200]}) -> "
                                       f"{'failed' if out.startswith('ERROR') else 'done'}")
+            sel = getattr(caller, "tool_select", None)
+            if sel is not None and sel.take_reload():  # pmjc_capabilities loaded connectors: send them from the next turn
+                schema, _ = tool_payload(p, sel.tools(), "", "openai", True)
+                schema_tokens = _tokens(schema)
+                used += schema_tokens
             if used <= soft or turn == max_turns:
                 continue
             last = max(i for i, x in enumerate(msgs) if x["role"] == "assistant")  # latest turn: kept word for word
@@ -304,7 +334,15 @@ async def _openai(p: ProviderConfig, prompt, caller, tools, system, max_turns) -
 
 # --- Anthropic Messages API ---------------------------------------------------------------------------------
 async def _anthropic(p: ProviderConfig, prompt, caller, tools, system, max_turns) -> Result:
-    schema, system = tool_payload(p, tools, system, "anthropic")
+    tools, system, ordered = _select_enter(p, prompt, caller, tools, system)
+    try:
+        return await _anthropic_loop(p, prompt, caller, tools, system, max_turns, ordered)
+    finally:
+        tool_select.end(caller)
+
+
+async def _anthropic_loop(p: ProviderConfig, prompt, caller, tools, system, max_turns, ordered) -> Result:
+    schema, system = tool_payload(p, tools, system, "anthropic", ordered)
     msgs = [{"role": "user", "content": prompt}]
     headers = {"x-api-key": router.api_key(p), "anthropic-version": "2023-06-01"}
     cost = 0.0
@@ -330,6 +368,9 @@ async def _anthropic(p: ProviderConfig, prompt, caller, tools, system, max_turns
                                 "content": await _tool(caller, b["name"], b.get("input") or {},
                                                        config.result_cap(p))})
             msgs.append({"role": "user", "content": results})
+            sel = getattr(caller, "tool_select", None)
+            if sel is not None and sel.take_reload():
+                schema, _ = tool_payload(p, sel.tools(), "", "anthropic", True)
     return Result("(stopped: turn limit)", p.id, cost, max_turns)
 
 

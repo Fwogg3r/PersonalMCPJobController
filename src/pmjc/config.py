@@ -48,6 +48,8 @@ class ProviderConfig(BaseModel):
     capabilities: list[str] = Field(default_factory=lambda: ["tools"])
     context_tokens: int = 32000
     schema_mode: str = "full"  # full | compact: compact sends shorter tool descriptions and schemas (small-context models)
+    tool_mode: str = "all"  # all | select: select sends core tools in full plus chosen connectors, one-line briefs for the rest
+    select_budget_tokens: int | None = None  # tool_mode select: cap (~tokens) on selected connectors' schemas; None: 30% of context_tokens
     max_result_chars: int | None = None  # cap on one tool result sent to the model; None: derived from context_tokens
     condense_at: float = 0.7  # condense older turns when the prompt passes this share of (context_tokens - reserve_tokens)
     reserve_tokens: int = 2048  # room kept for the model's answer
