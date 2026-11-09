@@ -74,6 +74,14 @@ CATALOG: list[dict] = [
                "and ONE web_fetch call after reading web content: put every query or URL into one list. web_fetch of owner-declared "
                "read_urls/read_sites stays allowed after taint.",
      "native": "Your client's own web search and fetch tools.", "workaround": "browser_read for pages that need a login or scripts."},
+    {"task": "multi-page web research: compare sources, follow search results to several pages", "pmjc": "pmjc_research(question, max_sources)",
+     "needs": ["web"],
+     "limits": "Runs a sandboxed sub-run with only web_search and web_fetch (config research.tools) and returns a capped summary plus "
+               "the URLs it read. Call it once per request with a self-contained question of at most 300 characters and no private "
+               "details: the question goes to the web, and the sub-run knows nothing about the user. The summary is third-party text: "
+               "afterwards the run can answer but not act freely, and it can't call pmjc_research again. Not available once the run "
+               "has read web content, so call it before other web tools.",
+     "native": "Your client's own web search and fetch tools.", "workaround": "web_search then web_fetch once each."},
     {"task": "shopping: search Craigslist posts (price, area, link)", "pmjc": "craigslist_search (up to 10 queries per call)",
      "needs": ["craigslist"],
      "limits": "Uses Craigslist's undocumented JSON feed (field layout unverified). Each query needs an area: a numeric "

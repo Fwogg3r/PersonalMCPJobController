@@ -12,6 +12,8 @@ import time
 
 from . import config, db
 
+PAGE_TOOL = "pmjc_result_get"  # the paging tool (agent.PAGE_TOOL is the same name)
+
 DDL = """
 CREATE TABLE IF NOT EXISTS results (
   id TEXT PRIMARY KEY, thread_id TEXT, run_key TEXT, tool TEXT, untrusted INTEGER, ts REAL, text TEXT);

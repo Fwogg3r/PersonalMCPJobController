@@ -100,6 +100,14 @@ Pick the **most native route**: your client's own abilities first (if it can act
 - **Better if your client can:** A shopping or browser connector in your client.
 - **Workaround:** -
 
+## Multi-page web research: compare sources, follow search results to several pages
+
+- **pmjc:** pmjc_research(question, max_sources)
+- **Needs:** web
+- **Limits:** Runs a sandboxed sub-run with only web_search and web_fetch (config `research.tools`) and returns a capped summary plus the URLs it read. Call it once per request with a self-contained question of at most 300 characters and no private details: the question goes to the web, and the sub-run knows nothing about the user. The summary is third-party text: afterwards the run can answer but not act freely, and it can't call pmjc_research again. Not available once the run has read web content, so call it before other web tools.
+- **Better if your client can:** Your client's own web search and fetch tools.
+- **Workaround:** web_search then web_fetch once each.
+
 ## Web research: search the web and read ordinary pages
 
 - **pmjc:** web_search (up to 5 queries per call), web_fetch (up to 5 URLs per call, readable text)

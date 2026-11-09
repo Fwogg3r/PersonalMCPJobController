@@ -156,6 +156,14 @@ class FrontDoorConfig(BaseModel):
     keepalive_seconds: float = 10.0  # SSE comment interval while waiting (stops mobile clients timing out)
 
 
+class ResearchConfig(BaseModel):
+    """The pmjc_research sub-run (see pmjc.research). Only public-web tools belong in `tools`: anything with
+    private output (browser tools, files, notes) is dropped at run time."""
+    tools: list[str] = Field(default_factory=lambda: ["web_search", "web_fetch"])
+    max_turns: int = 8
+    max_chars: int = 2400  # the summary returned to the parent run (about 600 tokens)
+
+
 class Settings(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8770
@@ -196,6 +204,7 @@ class Settings(BaseModel):
     mcp_servers: list[McpServerConfig] = Field(default_factory=list)
     discord_door: DiscordDoorConfig = Field(default_factory=DiscordDoorConfig)
     front_door: FrontDoorConfig = Field(default_factory=FrontDoorConfig)
+    research: ResearchConfig = Field(default_factory=ResearchConfig)
 
 
 _lock = threading.Lock()

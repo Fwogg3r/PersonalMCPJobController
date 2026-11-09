@@ -14,7 +14,7 @@ import time
 from typing import Any
 from urllib.parse import urlparse, urlsplit
 
-from . import auth, config, db, defang, memory, registry, shell
+from . import auth, config, db, defang, memory, registry, results, shell
 from .auth import Caller
 
 log = logging.getLogger("pmjc.executor")
@@ -153,7 +153,8 @@ async def _call_tool(caller: Caller, name: str, args: dict | None, reason: str) 
     if not caller.can(need):
         db.audit(caller.name, name, h, "denied", f"missing scope {need}")
         raise Denied(f"{caller.name} lacks scope '{need}' for {name}")
-    if t.egress and caller.untrusted and not declared_read(caller, name, args):
+    quarantined_ok = caller.quarantine and not caller.sensitive  # research sub-run that still holds nothing private
+    if t.egress and caller.untrusted and not quarantined_ok and not declared_read(caller, name, args):
         db.audit(caller.name, name, h, "denied", "egress after untrusted content")
         raise Denied(f"{name} sends data off the machine and this run has read untrusted content; "
                      "start a fresh run or ask the user")
@@ -172,7 +173,7 @@ async def _call_tool(caller: Caller, name: str, args: dict | None, reason: str) 
             caller.acted = True
             memory.act_record(caller.thread_id, name, h)
             _route(res, caller.thread_id)
-        if t.private_output:
+        if t.private_output and not (caller.quarantine and name == results.PAGE_TOOL):  # a quarantined run's own paging
             caller.sensitive = True  # derived and fail-closed: only tools declared public-web leave it alone
         _remember_urls(caller, args, res)  # before the taint below: URLs the model chose while still clean
         if t.untrusted_output:

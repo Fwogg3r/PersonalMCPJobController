@@ -34,6 +34,8 @@ class Caller:
     sensitive: bool = False  # the run has received the user's private data (model.md, notes, thread history, private tool
     # results). Derived and fail-closed, like `untrusted`. Only tracked for now: a later research sub-run (web tools only,
     # nothing private in its prompt) will be refused once its parent is sensitive, so private data can't ride into web queries.
+    quarantine: bool = False  # a research sub-run (pmjc.research): holds nothing private, so egress after untrusted content is
+    # allowed while `sensitive` stays False. Set ONLY by research.new_caller(); no API, model, job or watch path sets it.
     approved_write: bool = False  # internal: the owner approved a state write proposed by a tainted run; it is stored untrusted
     seen_urls: set[str] = field(default_factory=set, repr=False, compare=False)  # URLs the run's tools returned or fetched
     on_tool: Callable | None = field(default=None, repr=False, compare=False)  # async (name, args, status); trace hook
