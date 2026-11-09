@@ -21,3 +21,5 @@ links: [phase4/k]
 - Limits: body capped at 1 MB, 30 requests a minute per token (config).
 
 Follow-up (2026-11-09, review): without a client conversation id, a chat is identified by its first question plus first answer (new chats always get a new thread), so two chats opening with the same line no longer merge. Set public_url for phone apps (relative approve links).
+
+Fix (2026-11-09): with Google OAuth on, FastMCP required openid+email on every /mcp token, so pmjc bearer tokens got 403 (found when connecting a phone chat app over MCP). PmjcVerifier now adds the OAuth transport scopes to tokens pmjc verified itself; pmjc scopes are still checked per tool. Test test_pmjc_tokens_satisfy_oauth_transport_scopes.
