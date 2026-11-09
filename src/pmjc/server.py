@@ -229,7 +229,7 @@ def create_app() -> FastAPI:
 
     @app.put("/api/connectors/{cid}/credentials", tags=["admin"])
     async def set_creds(cid: str, body: CredIn, _: Caller = Depends(admin_caller)):
-        c = registry.get().connectors.get(cid)
+        c = registry.ensure_instance(cid)  # "<type>:<instance>" is created on first use
         if not c:
             raise HTTPException(404, "no such connector")
         fields = {f.name: f for f in c.credentials}
@@ -250,6 +250,10 @@ def create_app() -> FastAPI:
     async def clear_creds(cid: str, _: Caller = Depends(admin_caller)):
         for k in [k for k in creds.store().keys() if k.startswith(cid + ".")]:
             creds.store().delete(k)
+        if ":" in cid:  # a non-default instance goes away entirely; the default one keeps its options
+            s = config.load()
+            if s.connectors.pop(cid, None) is not None:
+                config.save(s)
         refresh_tools()
         return {"ok": True}
 

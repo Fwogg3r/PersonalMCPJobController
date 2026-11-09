@@ -122,6 +122,16 @@ class Connector:
     def __init__(self) -> None:
         self._http: httpx.AsyncClient | None = None
 
+    @property
+    def type_id(self) -> str:
+        """The connector type ("google"); `id` is "google:work" for a non-default instance."""
+        return self.id.partition(":")[0]
+
+    @property
+    def instance(self) -> str:
+        """Instance name ("work"), empty for the default instance."""
+        return self.id.partition(":")[2]
+
     # --- settings and secrets ---------------------------------------------------
     def secret(self, name: str, required: bool = True) -> str | None:
         v = creds.store().get(f"{self.id}.{name}")
@@ -194,7 +204,8 @@ class Connector:
 
     def describe(self) -> dict:
         return {
-            "id": self.id, "name": self.name, "description": self.description, "docs_url": self.docs_url,
+            "id": self.id, "type": self.type_id, "instance": self.instance,
+            "name": f"{self.name} [{self.instance}]" if self.instance else self.name, "description": self.description, "docs_url": self.docs_url,
             "limitations": self.limitations, "native_alternatives": self.native_alternatives,
             "credentials": [f.__dict__ for f in self.credentials],
             "configured": self.configured(), "channel": self.is_channel,

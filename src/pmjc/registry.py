@@ -15,6 +15,7 @@ import inspect
 import json
 import logging
 import pkgutil
+import re
 import sys
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -54,6 +55,18 @@ def with_limits(doc: str, c: Connector) -> str:
     if c.native_alternatives:
         extra += "\nBetter if your client can: " + c.native_alternatives.strip()
     return doc + extra
+
+
+INSTANCE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
+MAX_TOOL_NAME = 64  # MCP clients and OpenAI both cap tool names at 64 characters
+
+
+def instance_tool_name(name: str, instance: str) -> str:
+    """Tool name for a connector instance: the default instance keeps `name`; others get `name__<instance>`."""
+    if not instance:
+        return name
+    suffix = "__" + re.sub(r"[^A-Za-z0-9_]", "_", instance)
+    return name[:MAX_TOOL_NAME - len(suffix)] + suffix
 
 
 def _classes_in(module) -> list[type[Connector]]:
@@ -114,6 +127,24 @@ class Registry:
                 self.connectors[cls.id] = cls()
             except Exception as e:
                 self.errors[cls.id] = repr(e)
+        # extra instances: a `connectors:` key "<type>:<instance>" runs another copy of <type> with its own options
+        # and credentials; its id is the whole key, so settings, secrets, state and event sources are namespaced by it
+        by_type = {cls.id: cls for cls in classes if cls.id in self.connectors}
+        for key in config.load().connectors:
+            if ":" not in key or key in disabled:
+                continue
+            typ, _, inst = key.partition(":")
+            if not INSTANCE_NAME.match(inst):
+                self.errors[key] = f"instance name {inst!r} must match {INSTANCE_NAME.pattern}"
+            elif typ not in by_type:
+                self.errors[key] = f"no connector type {typ!r} for instance {key!r}"
+            else:
+                try:
+                    c = by_type[typ]()
+                    c.id = key
+                    self.connectors[key] = c
+                except Exception as e:
+                    self.errors[key] = repr(e)
         for k, v in self.errors.items():
             log.warning("connector %s failed to load: %s", k, v)
         return self
@@ -125,13 +156,17 @@ class Registry:
             if not include_unconfigured and not c.configured():
                 continue
             for meta, fn in c.tools():
-                if meta["name"] in seen:
-                    log.warning("duplicate tool name %s in %s; skipped", meta["name"], c.id)
+                name = instance_tool_name(meta["name"], c.instance)
+                if name in seen:
+                    log.warning("duplicate tool name %s in %s; skipped", name, c.id)
                     continue
-                seen.add(meta["name"])
-                out.append(ToolSpec(meta["name"], c.id, meta["scope"], fn, with_limits(inspect.getdoc(fn) or "", c),
+                seen.add(name)
+                raw = inspect.getdoc(fn) or ""
+                if c.instance:
+                    raw = f"[{c.instance}] {raw}"
+                out.append(ToolSpec(name, c.id, meta["scope"], fn, with_limits(raw, c),
                                     meta["untrusted_output"], meta.get("egress", False),
-                                    raw_doc=inspect.getdoc(fn) or "",
+                                    raw_doc=raw,
                                     schema=getattr(fn, "__pmjc_schema__", None)))
         return out
 
@@ -229,3 +264,18 @@ def compact_tool_doc(t: ToolSpec) -> str:
 
 def compact_tool_schema(t: ToolSpec) -> dict[str, Any]:
     return compact_json_schema(tool_json_schema(t))
+
+
+def ensure_instance(key: str) -> Connector | None:
+    """The connector for `key`; for an unknown "<type>:<instance>" of a loaded type, create the instance (an empty
+    `connectors:` entry in settings) so credentials can be set before any option exists. None if it can't exist."""
+    reg = get()
+    if key in reg.connectors:
+        return reg.connectors[key]
+    typ, _, inst = key.partition(":")
+    if not inst or typ not in reg.connectors or not INSTANCE_NAME.match(inst) or key in config.load().disabled_connectors:
+        return None
+    s = config.load()
+    s.connectors.setdefault(key, {})
+    config.save(s)
+    return reload().connectors.get(key)
