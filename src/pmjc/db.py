@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS audit (
 CREATE TABLE IF NOT EXISTS spend (
   id INTEGER PRIMARY KEY, ts REAL, provider TEXT, usd REAL, tokens_in INTEGER, tokens_out INTEGER);
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS command_runs (
+  run_id TEXT PRIMARY KEY, tool TEXT, machine TEXT, command TEXT, owner TEXT, started REAL, status TEXT,
+  exit_code INTEGER, output_tail TEXT, finished REAL, detached INTEGER DEFAULT 0, timed_out INTEGER DEFAULT 0);
 """
 
 _local = threading.local()
@@ -79,5 +82,5 @@ def audit(actor: str, tool: str, args_hash: str, status: str, detail: str = "") 
 
 def prune(retention_days: int) -> None:
     cutoff = time.time() - retention_days * 86400
-    for t, col in (("audit", "ts"), ("events", "ts"), ("runs", "started"), ("approvals", "created")):
+    for t, col in (("audit", "ts"), ("events", "ts"), ("runs", "started"), ("approvals", "created"), ("command_runs", "started")):
         x(f"DELETE FROM {t} WHERE {col} < ?", cutoff)

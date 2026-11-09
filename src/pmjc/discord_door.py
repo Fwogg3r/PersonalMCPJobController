@@ -110,6 +110,7 @@ class Door:
         self.connected = False
         self._locks: dict[str, asyncio.Lock] = {}
         self._tasks: set[asyncio.Task] = set()
+        self._deciding: set[str] = set()  # approvals whose button click is being handled (double-click guard)
         _install_handler()
         self.app_id = ""
         self.parents: dict[str, str] = {}  # thread id -> parent channel id
@@ -344,26 +345,74 @@ class Door:
         if kind in ("del", "keep"):
             await self._delete_choice(i, cb, kind == "del", aid)
             return
-        await self.api("POST", cb, {"type": 6})  # acknowledge within 3 s; the tool may take longer
-        row = db.q("SELECT tool FROM approvals WHERE id=?", aid)
+        await self._decide_button(i, cb, kind == "a", aid, user)
+
+    def _ephemeral(self, cb: str, text: str):
+        return self.api("POST", cb, {"type": 4, "data": {"content": text, "flags": 64}})
+
+    async def _decide_button(self, i: dict, cb: str, approve: bool, aid: str, user: dict) -> None:
+        """Approve/Deny: answer the click at once (type 7 update: the buttons go away and the message says what is
+        happening), then decide in the background and edit the message with the outcome. A second click on an
+        approval that is already being decided or decided gets a private note and never runs anything again.
+        The check and the claim happen before the first await, so two quick clicks can't both pass."""
+        if aid in self._deciding:
+            await self._ephemeral(cb, "Already approved, running..." if approve else "Already being decided...")
+            return
+        row = db.q("SELECT tool, status FROM approvals WHERE id=?", aid)
+        if row and row[0]["status"] != "pending":
+            await self._ephemeral(cb, f"Already {row[0]['status']}.")
+            return
+        self._deciding.add(aid)
         tool_name = row[0]["tool"] if row else "the action"
-        res = await executor.decide(aid, kind == "a", f"discord:{user['id']}")
+        body = ((i.get("message") or {}).get("content") or "")[:1200]
+        who = f"<@{user['id']}>"
+        working = body + f"\n{'✅ Approved' if approve else '🚫 Denied'} by {who}" + (" — running…" if approve else "")
+        try:
+            await self.api("POST", cb, {"type": 7, "data": {"content": working[:MAX_MSG], "components": [],
+                                                              "allowed_mentions": {"parse": []}}})
+        except Exception:
+            self._deciding.discard(aid)
+            raise
+        self.spawn(self._finish_decision(i, aid, approve, user, tool_name, body))
+
+    async def _finish_decision(self, i: dict, aid: str, approve: bool, user: dict, tool_name: str, body: str) -> None:
+        try:
+            await self.logged(f"approval {'approve' if approve else 'deny'} of {tool_name}",
+                              self._decide_and_edit(i, aid, approve, user, tool_name, body))
+        finally:
+            self._deciding.discard(aid)
+
+    async def _decide_and_edit(self, i: dict, aid: str, approve: bool, user: dict, tool_name: str, body: str) -> None:
+        try:
+            res = await executor.decide(aid, approve, f"discord:{user['id']}")
+        except Exception as e:  # e.g. Denied: tampered payload
+            res = {"status": "failed", "error": f"{type(e).__name__}: {str(e)[:300]}"}
         status = res.get("status", "?")
         detail = ""
         if "result" in res and res["result"] is not None:
             detail = json.dumps(res["result"], default=str) if not isinstance(res["result"], str) else res["result"]
         elif res.get("error"):
             detail = res["error"]
-        body = ((i.get("message") or {}).get("content") or "")[:1200]
-        body += f"\n**{status}** by <@{user['id']}>" + (f"\n```\n{detail[:600]}\n```" if detail else "")
+        text = body + f"\n**{status}** by <@{user['id']}>" + (f"\n```\n{detail[:600]}\n```" if detail else "")
+        edit = {"content": text[:MAX_MSG], "components": [], "allowed_mentions": {"parse": []}}
         app_id = i.get("application_id") or self.bot_id
-        await self.api("PATCH", f"/webhooks/{app_id}/{i['token']}/messages/@original",
-                       {"content": body[:MAX_MSG], "components": [], "allowed_mentions": {"parse": []}})
+        try:
+            await self.api("PATCH", f"/webhooks/{app_id}/{i['token']}/messages/@original", edit)
+        except Exception:  # the interaction token lasts 15 minutes; fall back to editing the message as the bot
+            mid, ch0 = (i.get("message") or {}).get("id"), i.get("channel_id")
+            if mid and ch0:
+                with contextlib.suppress(Exception):
+                    await self.api("PATCH", f"/channels/{ch0}/messages/{mid}", edit)
         ch = i.get("channel_id")
         if ch and status in ("done", "denied", "failed") and self.thread_for(ch) is not None:
             from . import ask as ask_mod
             text = ask_mod.outcome_text(tool_name, status, detail)
             self.spawn(self._continue(ch, not i.get("guild_id"), text, user["id"]))
+
+    async def drain(self) -> None:
+        """Wait for background work (approval decisions, follow-up turns). For tests and shutdown."""
+        while self._tasks:
+            await asyncio.gather(*list(self._tasks), return_exceptions=True)
 
     async def _continue(self, ch: str, is_dm: bool, text: str, user_id: str) -> None:
         """Feed an approval outcome back into the conversation in channel ch, as the next turn."""

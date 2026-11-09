@@ -75,7 +75,7 @@ CATALOG: list[dict] = [
      "native": "Browser or computer control in your client.",
      "workaround": "pmjc_handoff with the link, so the user opens it themselves."},
     {"task": "run a command or script", "pmjc": "ssh_run (other machines over SSH, and the machine pmjc runs on, locally: see ssh_machines), the user's command tools (kind: command YAML)", "needs": ["ssh"],
-     "limits": "Needs approval; only configured machines and commands.", "native": "Your client's shell if it has one.",
+     "limits": "Needs approval; only configured machines and commands. Returns within about 8 s: a longer command returns status running with a run_id and keeps going; follow up with command_status(run_id).", "native": "Your client's shell if it has one.",
      "workaround": "Last resort when no tool fits (e.g. editing a file): pmjc_shell_run proposes one short shell command "
                    "for the pmjc host. It always needs the owner's approval, is refused after reading third-party "
                    "content and for callers config doesn't allow, and its output is untrusted."},

@@ -97,6 +97,12 @@ The numbers below are one example setup (a 27B 4-bit model on a 24 GB card); kee
 - **Scope:** only the requesting caller or an admin can wait on or see an approval (`pmjc_approval_status` is tightened the same way). The wait tool is withheld from pmjc's own ask/job/watch runs, which keep their own continuation.
 - **Cross-process:** the HTTP server may handle the decision while the stdio process holds the wait, so the waiter also polls the database (`approval_poll_seconds`, default 2).
 
+## Snappy commands and approvals (owner request, 2026-11-09)
+- **Problem:** "it needs to be as snappy as possible with the model". An approved `ssh_run` with `start cmd /k ...` returned nothing until the owner closed the window (the child inherited the pipes and `subprocess.run` waited for EOF); long commands blocked for their runtime; the Discord Approve button looked dead until the tool finished, so the owner clicked twice.
+- **Decision:** commands return within seconds with a run id (`wait_seconds`, default 8, config `commands.wait_seconds`) and the model follows up with `command_status`; we never wait on pipes held by detached children (1 s grace, then `detached_children: true`); Discord buttons acknowledge instantly (type 7) and finish in the background with a double-click guard.
+- **Options considered:** (a) just raise nothing and tell models to use `timeout_seconds` (still blocks); (b) detach every command and always return a run id (breaks the common short-command case and costs an extra call); (c) the chosen hybrid: full result when fast, run id when slow. For the button: type 6 deferred update (no visible change, which caused the double clicks) versus type 7 with an edit (chosen).
+- **Limits:** live output only exists in the process that runs the command (other processes see status and the last 4000 characters); `command_stop` works only in that process; a `wait_seconds` argument isn't stored in the shell-command approval.
+
 ## Declared browser reads (phase4/s)
 - **Problem:** `browser_read` is `egress` (the URL leaves the machine), so after one page of untrusted content a run can't read a second one.
 - **Decision:** a job file or watch spec may declare `read_urls` (exact URLs) and/or `read_sites` (domains, subdomains included). The executor lets `browser_read` and `browser_extract` through after taint when the `url` argument matches that list, because the owner fixed the URL, not the model. Everything else keeps the egress rule. The browser connector's `allowed_domains` check still applies on top.

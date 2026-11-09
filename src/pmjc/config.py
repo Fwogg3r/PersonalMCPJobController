@@ -100,6 +100,11 @@ class DiscordDoorConfig(BaseModel):
     # and added to the pmjc thread that messaged that person; never acted on
 
 
+class CommandsConfig(BaseModel):
+    """How ssh_run, ssh_check and pmjc_shell_run return (see pmjc.commands)."""
+    wait_seconds: int = 8  # a command still running after this many seconds returns a run_id; follow up with command_status
+
+
 class Settings(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8770
@@ -135,6 +140,7 @@ class Settings(BaseModel):
     thread_retention_days: int = 90  # closed threads older than this are deleted
     notify_channels: list[str] = Field(default_factory=list)  # connector ids used for approvals/alerts, in order
     discord_door: DiscordDoorConfig = Field(default_factory=DiscordDoorConfig)
+    commands: CommandsConfig = Field(default_factory=CommandsConfig)
 
 
 _lock = threading.Lock()
