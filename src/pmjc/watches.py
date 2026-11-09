@@ -138,6 +138,9 @@ class WatchManager:
         if not caller.can("jobs"):
             raise PermissionError("starting a watch needs the 'jobs' scope")
         spec = validate(dict(spec))
+        if caller.kind != "admin":  # declared reads are the owner's to set, never a model's
+            spec.pop("read_urls", None)
+            spec.pop("read_sites", None)
         tid = spec.get("thread_id") or caller.thread_id
         if tid and not memory.thread_exists(tid):
             raise ValueError(f"no thread {tid}; omit thread_id to create one")
@@ -220,7 +223,9 @@ class WatchManager:
                 asyncio.create_task(self.fire(wid, "event", json.dumps(ctx, default=str), untrusted=ev.untrusted))
 
     def _caller(self, w: dict) -> Caller:
-        return Caller(f"watch:{w['id']}", "job", set(w["scopes"]))
+        sp = w.get("spec") or {}
+        return Caller(f"watch:{w['id']}", "job", set(w["scopes"]),
+                      read_urls=tuple(sp.get("read_urls") or ()), read_sites=tuple(sp.get("read_sites") or ()))
 
     async def _check_poll(self, wid: str) -> None:
         w = self.active.get(wid)

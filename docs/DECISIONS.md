@@ -87,3 +87,9 @@ Design decisions and the reasoning behind them, newest first. Details of how eac
 - **Shell-command fallback (phase4/j), who may propose:** set by a config option. The public default is owner chats only (Discord DM, REST, CLI runs the owner started, never tainted). Jobs and watches can be allowed through config.
 - **Shell-command limits:** a timeout and an output cap, both set in config. The model may ask for a different timeout or cap in the request, shown to the owner in the approval. The full command is always shown and logged, and it runs only after approval.
 - **Public by default:** the repo ships generic, publicly usable defaults. Settings specific to the owner (configs, their bots and so on) go in the owner's private dev-tools repo, not here.
+
+## Declared browser reads (phase4/s)
+- **Problem:** `browser_read` is `egress` (the URL leaves the machine), so after one page of untrusted content a run can't read a second one.
+- **Decision:** a job file or watch spec may declare `read_urls` (exact URLs) and/or `read_sites` (domains, subdomains included). The executor lets `browser_read` and `browser_extract` through after taint when the `url` argument matches that list, because the owner fixed the URL, not the model. Everything else keeps the egress rule. The browser connector's `allowed_domains` check still applies on top.
+- **Who can set it:** only the owner. The lists live in the stored definition and are loaded into the `Caller` by the job engine or watch runner; there is no tool argument for them. `save_job` clears them for any non-admin creator and `watches.start` drops them from specs from non-admin callers, so a model (tainted or not) can't grant itself reads.
+- **Residual risk:** `read_sites` lets a tainted run choose the path and query on that site, which could carry data out in the URL. Prefer `read_urls` for untrusted jobs and reserve `read_sites` for sites the owner trusts not to log hostile requests.

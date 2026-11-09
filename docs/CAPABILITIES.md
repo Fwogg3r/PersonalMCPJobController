@@ -102,9 +102,9 @@ Pick the **most native route**: your client's own abilities first (if it can act
 
 ## Web pages that need the user's login
 
-- **pmjc:** browser_read (pmjc's own signed-in browser, allowed domains)
+- **pmjc:** browser_read (text and links), browser_extract (rows by CSS selector) in pmjc's own signed-in browser, allowed domains
 - **Needs:** browser
-- **Limits:** Read-only: it can't click, type or submit.
+- **Limits:** Read-only: it can't click, type or submit. After a run has read one page, further reads are refused unless the owner declared the URL or site (read_urls/read_sites) in the job or watch.
 - **Better if your client can:** Browser or computer control in your client.
 - **Workaround:** pmjc_handoff with the link, so the user opens it themselves.
 
