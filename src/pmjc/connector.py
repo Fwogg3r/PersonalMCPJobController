@@ -169,21 +169,22 @@ class Connector:
             await self._http.aclose()
 
     # --- introspection ------------------------------------------------------------
-    def tools(self) -> list[tuple[dict, Callable]]:
+    def _marked(self, marker: str) -> list[tuple[dict, Callable]]:
+        """Methods carrying `marker`, found on the class so properties (e.g. `http`, which builds a client) aren't
+        evaluated: inspect.getmembers on the instance did that for every connector and cost seconds per load."""
         out = []
-        for _, m in inspect.getmembers(self, predicate=inspect.ismethod):
-            meta = getattr(m, "__pmjc_tool__", None)
+        for name in sorted(dir(type(self))):
+            fn = inspect.getattr_static(type(self), name, None)
+            meta = getattr(fn, marker, None) if callable(fn) else None
             if meta:
-                out.append((meta, m))
+                out.append((meta, getattr(self, name)))
         return out
 
+    def tools(self) -> list[tuple[dict, Callable]]:
+        return self._marked("__pmjc_tool__")
+
     def event_sources(self) -> list[tuple[dict, Callable]]:
-        out = []
-        for _, m in inspect.getmembers(self, predicate=inspect.ismethod):
-            meta = getattr(m, "__pmjc_events__", None)
-            if meta:
-                out.append((meta, m))
-        return out
+        return self._marked("__pmjc_events__")
 
     @property
     def is_channel(self) -> bool:
