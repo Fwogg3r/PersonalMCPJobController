@@ -14,6 +14,9 @@ you                                    ──► dashboard · CLI      ┘      
 - **Modular.** A new service is one small Python file, or a YAML file if it's a plain HTTP API.
 - **PC-native sensing.** On Windows, pmjc reads the notification center, so any app that notifies you (Discord, Messenger in Chrome, Outlook, ...) becomes an event source. It can hide those banners so only pmjc sees them.
 - **Safe by default.** Tools that change things need your approval (dashboard, phone notification or link). Runs that read third-party content can't send data out. Tokens are scoped, every call is audited, and there's a kill switch.
+- **One chat app for everything.** Point any OpenAI-compatible chat app, on your phone or PC, at pmjc's `/v1` endpoint. pmjc picks the model (local first), the tools and the thread for each message ([docs/FRONT_DOOR.md](docs/FRONT_DOOR.md)).
+- **Built for local models.** Compact tool schemas, one-line tool briefs with on-demand loading, bounded tool results with paging, automatic condensing near the context limit, and a quarantined web-research sub-run keep a 32k-64k model useful. `pmjc eval` measures whether a change actually helps.
+- **Reuse existing MCP servers.** Mount any MCP server (GitHub, Spotify, notes apps, ...) as a connector; pmjc's approvals and taint rules apply to its tools too.
 - **Always on.** `pmjc service install` starts it at logon or boot and restarts it if it stops (Windows Task Scheduler, systemd, launchd).
 
 ## Set up with an AI agent
@@ -128,6 +131,7 @@ How it works from any client: connect, read the first result's context header (o
 | Claude Desktop, Cursor, other stdio MCP clients | command `uv`, args `["run", "--directory", "/path/to/repo", "pmjc", "mcp"]` (see [.mcp.json.example](.mcp.json.example)) |
 | Any MCP client over HTTP | `http://127.0.0.1:8770/mcp` with header `Authorization: Bearer <token>` |
 | claude.ai / Claude mobile apps | publish pmjc through a tunnel and turn on OAuth (see [Remote access](#remote-access)) |
+| Any OpenAI-compatible chat app (phone or PC) | base URL `https://<your pmjc host>/v1`, API key = a pmjc token; models `pmjc`, `pmjc-local`, `pmjc:<tier>` ([docs/FRONT_DOOR.md](docs/FRONT_DOOR.md)) |
 | n8n, Make, Zapier, Home Assistant `rest_command`, iOS Shortcuts | REST: `POST /api/tools/<name>` with a JSON body; OpenAPI at `/openapi.json` |
 | OpenAI / Anthropic SDKs, LangChain, LlamaIndex, ... | `GET /api/tools/export/openai` (or `anthropic`), then run each call with `POST /api/tools/<name>` |
 | Anything that can send a webhook | `POST /hooks/<name>` creates an event that jobs can react to |
@@ -137,6 +141,8 @@ Create tokens with `pmjc token create <name> --scopes sources,jobs` or in the da
 - `actions`: tools that change things. Every call still needs your approval.
 - `jobs`: create and run jobs.
 - `admin`: the dashboard and settings.
+
+When an MCP client calls a tool that needs your approval, the call waits (up to `approval_wait_seconds`, default 50 s) and returns the real result once you approve; if you take longer, the model is told to call `pmjc_approval_wait` and keeps waiting on its own, so you never have to prompt it again. Long commands (`ssh_run`, `pmjc_shell_run`) return within a few seconds with a run id; the model follows up with `command_status`.
 
 ## Jobs
 
@@ -166,12 +172,21 @@ Jobs run on the first provider in your list (dashboard, **Routing**) that is ena
 
 Each run stays on one provider. If that provider fails before anything was changed, the run starts over on the next one.
 
+**Front-door routing** (chats from Discord, `/v1`, REST and the CLI):
+- **Tiers and rules.** Named provider lists (`default`, `strong`, `local`, or your own) and `route_rules` (prefix such as `/strong`, keywords, surface, length); the first match wins. Hard limits come first: private threads stay local, and routing never picks a provider outside the allowed candidates.
+- **Sticky per thread.** A thread keeps the provider chosen on its first turn. If it fell back (say the local model was still loading), the next turn switches back unless the thread has become hard or long; the answer footer says which and how to pivot (`/local`, `/strong`).
+- **GPU busy.** List your games or launchers in `router.gpu_busy_processes`. When the GPU is busy, pmjc asks: use local anyway (approval), use a cloud model, or wait. Jobs wait by default.
+- **Tools for small models.** Per provider, `schema_mode: compact` and `tool_mode: select` send a core set plus the tools the request needs, with one-line briefs of the rest; the model loads more with `pmjc_capabilities`.
+- **Routing log.** `pmjc routing --days 7` shows what was chosen and why, and which answers you re-asked on a stronger tier.
+
 ## Connectors
 
 | Connector | What it gives agents | Needs |
 |---|---|---|
 | `windows_notifications` | Events and reads from the Windows notification center | Windows; apps signed in on the PC |
-| `browser` | Reads pages on allowed domains in pmjc's signed-in browser profile | `--extra browser`, `pmjc browser login <url>` |
+| `browser` | Reads pages (text and links), extracts rows by CSS selector, scrolls and expands; clicking and typing (`browser_act`) need approval. Allowed domains only, signed-in profile | `--extra browser`, `pmjc browser login <url>` |
+| `web` | `web_search` and `web_fetch` (readable text, private addresses refused); `pmjc_research` runs multi-page research in a sub-run that never sees your private data | A SearXNG URL or a Brave Search key |
+| `ebay`, `craigslist` | Structured listing search, several queries per call | eBay developer keys; Craigslist areas |
 | `home_assistant` | States, services, phone location, push notifications with approve buttons | URL + long-lived token |
 | `discord` | Read and post in servers your bot is in | Bot token |
 | `telegram` | Notifications to you, messages sent to your bot | Bot token + chat id |
@@ -181,11 +196,14 @@ Each run stays on one provider. If that provider fails before anything was chang
 | `weather`, `places` | Open-Meteo forecasts, OpenStreetMap places | Nothing |
 | `files` | Read-only list, search and read inside folders you allow | Option `roots` |
 | `pc` | CPU, memory, disks, GPU, processes | Nothing |
-| `ssh` | Check any machine; run commands with approval | `pmjc ssh add <name> --host ... --user ...` or `~/.ssh/config` aliases |
+| `ssh` | Check any machine and run commands with approval, including the machine pmjc runs on (no SSH needed for it) | `pmjc ssh add <name> --host ... --user ...` or `~/.ssh/config` aliases |
 | `lmstudio` | Model status per host; ask an already-loaded model | Option `hosts` |
 | *your CLIs* | Any command-line tool, as YAML (`kind: command`) | A file in `connectors.d/` |
 | `ntfy`, `webhook` | Push notifications to your phone, outgoing webhooks | Topic / URL |
-| `pmjc` | Events, jobs, runs and approvals | Nothing |
+| `pmjc` | Events, jobs, runs, approvals, threads, memory, contacts; `pmjc_shell_run` as a last resort (always approved) | Nothing |
+| *mounted MCP servers* | Every tool of any MCP server you list in `mcp_servers:` (stdio or HTTP), as `<id>__<tool>`; tools need approval unless the server marks them read-only | The server's own setup |
+
+Run a connector more than once with `<type>:<instance>` keys (for example `google:work` next to `google`); the extra instance's tools get a `__work` suffix.
 
 ### Add a service
 
@@ -222,7 +240,8 @@ pmjc only listens on `127.0.0.1`. To reach it from a phone or the claude.ai apps
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The main protections:
 - Tool tags fail closed: a tool counts as `act` unless it says otherwise.
-- Taint is tracked per run: after a run reads third-party content, egress tools are blocked and every action needs approval.
+- Taint is tracked per run: after a run reads third-party content, egress tools are blocked and every action needs approval. Writing memory, contacts, jobs or watches from such a run also needs approval, and links in its answers are defanged so they can't leak data.
+- A derived `sensitive` flag tracks whether a run has seen your private data; only the web-research sub-run, which starts with nothing private, may keep browsing after reading web pages.
 - Approvals are single-use and tied to a hash of the exact action. A link preview can't approve anything, because approving takes a POST.
 - Host and Origin checks block DNS rebinding and cross-site requests.
 - Tokens are stored hashed, and the audit log holds metadata only.
@@ -234,6 +253,7 @@ Like any keyring or browser profile, anything running as your OS user can read p
 ```bash
 uv run pytest
 uv run pmjc doctor
+uv run pmjc eval run      # score the assistant on scripted tasks with your local model (see docs/EVALS.md)
 ```
 
 License: MIT.
