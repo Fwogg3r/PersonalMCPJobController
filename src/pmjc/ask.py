@@ -94,11 +94,16 @@ def history(thread_id: str, turns: int) -> tuple[str, bool]:
     return "\n".join(lines), tainted
 
 
+def ask_tools(caller: Caller) -> list:
+    """The tools ask() offers a run for this caller."""
+    return [t for t in registry.get().tools()
+            if (t.scope == "read" and caller.can("sources")) or (t.name in WATCH_TOOLS and caller.can("jobs"))
+            or (t.scope == "act" and caller.can("actions"))]
+
+
 async def ask(caller: Caller, text: str, private: bool = False, provider_order: list[str] | None = None,
               thread_id: str | None = None, history_turns: int = 0, extra_system: str = "") -> dict:
-    tools = [t for t in registry.get().tools()
-             if (t.scope == "read" and caller.can("sources")) or (t.name in WATCH_TOOLS and caller.can("jobs"))
-             or (t.scope == "act" and caller.can("actions"))]
+    tools = ask_tools(caller)
     if thread_id and not memory.thread_exists(thread_id):
         raise ValueError(f"no thread {thread_id}")
     thread_exists_before = bool(thread_id)

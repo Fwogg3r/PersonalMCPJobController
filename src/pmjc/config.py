@@ -47,6 +47,7 @@ class ProviderConfig(BaseModel):
     load_model: bool = True  # for LM Studio hosts: run `lms load <model>` if the model isn't loaded
     capabilities: list[str] = Field(default_factory=lambda: ["tools"])
     context_tokens: int = 32000
+    schema_mode: str = "full"  # full | compact: compact sends shorter tool descriptions and schemas (small-context models)
     monthly_budget_usd: float | None = None
     price_in_per_mtok: float = 0.0
     price_out_per_mtok: float = 0.0

@@ -23,9 +23,10 @@ browser_app = typer.Typer(help="pmjc's signed-in browser profile.")
 ssh_app = typer.Typer(help="Machines pmjc can reach over SSH.")
 appr_app = typer.Typer(help="Actions waiting for approval.")
 door_app = typer.Typer(help="Discord front door: chat with pmjc through your bot.")
+tools_app = typer.Typer(help="Inspect the tools offered to models.")
 for name, sub in [("token", token_app), ("auth", auth_app), ("jobs", jobs_app), ("notifications", notif_app),
                   ("service", svc_app), ("browser", browser_app), ("ssh", ssh_app), ("approvals", appr_app),
-                  ("discord-door", door_app)]:
+                  ("discord-door", door_app), ("tools", tools_app)]:
     app.add_typer(sub, name=name)
 
 
@@ -221,6 +222,27 @@ def ask(text: str, private: bool = typer.Option(False, help="local models only")
         finally:
             await registry.get().close()
     _out(asyncio.run(go()))
+
+
+@tools_app.command("size")
+def tools_size(provider: Optional[str] = typer.Option(None, "--provider", help="provider id (shows its schema_mode)")):
+    """Size of the tool definitions ask() sends, in full and compact schema mode (~tokens = chars / 4)."""
+    from . import agent, ask as ask_mod, auth, config
+    prov = None
+    if provider:
+        prov = next((p for p in config.load().routing if p.id == provider), None)
+        if prov is None:
+            raise typer.BadParameter(f"no provider {provider}")
+    tools = ask_mod.ask_tools(auth.Caller("ask:cli", "remote", {"sources", "jobs"}))
+    out = {"tools": len(tools)}
+    for mode in ("full", "compact"):
+        p = config.ProviderConfig(id="size", kind="openai_compat", schema_mode=mode)
+        schema, system = agent.tool_payload(p, tools, "", "openai")
+        chars = len(json.dumps(schema, separators=(",", ":"))) + len(system)
+        out[mode] = {"chars": chars, "approx_tokens": chars // 4}
+    if prov:
+        out["provider"] = {"id": prov.id, "schema_mode": prov.schema_mode}
+    _out(out)
 
 
 @app.command()

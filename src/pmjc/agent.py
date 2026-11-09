@@ -96,10 +96,35 @@ def _json_part(text: str) -> str:
     return t
 
 
+def limits_block(tools: list[ToolSpec]) -> str:
+    """Compact mode: each connector's limits once, only for connectors that have a tool in this run."""
+    reg = registry.get()
+    lines = []
+    for cid in sorted({t.connector for t in tools}):
+        c = reg.connectors.get(cid)
+        if c is not None and c.limitations:
+            lines.append(f"- {cid}: {' '.join(c.limitations.split())}")
+    return ("\n\nLimits of the connectors you have tools for:\n" + "\n".join(lines)) if lines else ""
+
+
+def tool_payload(p: ProviderConfig, tools: list[ToolSpec], system: str, fmt: str) -> tuple[list[dict], str]:
+    """Tool definitions in the provider's wire format, plus the system prompt (compact mode appends the limits)."""
+    compact = p.schema_mode == "compact"
+    if compact:
+        tools = sorted(tools, key=lambda t: (t.connector, t.name))
+        system = system + limits_block(tools)
+        desc, params = registry.compact_tool_doc, registry.compact_tool_schema
+    else:
+        desc, params = (lambda t: t.doc[:1000]), registry.tool_json_schema
+    if fmt == "openai":
+        return [{"type": "function", "function": {"name": t.name, "description": desc(t), "parameters": params(t)}}
+                for t in tools], system
+    return [{"name": t.name, "description": desc(t), "input_schema": params(t)} for t in tools], system
+
+
 # --- OpenAI-compatible (LM Studio, Ollama, OpenAI, OpenRouter, ...) --------------------------------------
 async def _openai(p: ProviderConfig, prompt, caller, tools, system, max_turns) -> Result:
-    schema = [{"type": "function", "function": {"name": t.name, "description": t.doc[:1000],
-                                                "parameters": registry.tool_json_schema(t)}} for t in tools]
+    schema, system = tool_payload(p, tools, system, "openai")
     msgs = [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
     headers = {"Authorization": f"Bearer {router.api_key(p)}"} if p.credential else {}
     cost = 0.0
@@ -132,7 +157,7 @@ async def _openai(p: ProviderConfig, prompt, caller, tools, system, max_turns) -
 
 # --- Anthropic Messages API ---------------------------------------------------------------------------------
 async def _anthropic(p: ProviderConfig, prompt, caller, tools, system, max_turns) -> Result:
-    schema = [{"name": t.name, "description": t.doc[:1000], "input_schema": registry.tool_json_schema(t)} for t in tools]
+    schema, system = tool_payload(p, tools, system, "anthropic")
     msgs = [{"role": "user", "content": prompt}]
     headers = {"x-api-key": router.api_key(p), "anthropic-version": "2023-06-01"}
     cost = 0.0

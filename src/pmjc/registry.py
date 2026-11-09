@@ -12,6 +12,7 @@ import importlib
 import importlib.metadata
 import importlib.util
 import inspect
+import json
 import logging
 import pkgutil
 import sys
@@ -37,6 +38,7 @@ class ToolSpec:
     doc: str
     untrusted_output: bool
     egress: bool = False
+    raw_doc: str = ""  # the docstring alone, without the connector's limits (used by compact schemas)
 
     @property
     def mcp_scope(self) -> str:
@@ -121,7 +123,8 @@ class Registry:
                     continue
                 seen.add(meta["name"])
                 out.append(ToolSpec(meta["name"], c.id, meta["scope"], fn, with_limits(inspect.getdoc(fn) or "", c),
-                                    meta["untrusted_output"], meta.get("egress", False)))
+                                    meta["untrusted_output"], meta.get("egress", False),
+                                    raw_doc=inspect.getdoc(fn) or ""))
         return out
 
     def tool(self, name: str) -> ToolSpec | None:
@@ -166,3 +169,53 @@ def tool_json_schema(t: ToolSpec) -> dict[str, Any]:
     schema = model.model_json_schema()
     schema.pop("title", None)
     return schema
+
+
+# --- compact schemas for small-context providers (provider option schema_mode: compact) ---------------------
+_SHORT_DEFAULT = 24  # keep a default only if its JSON is at most this many characters
+
+
+def _compact_node(n: Any) -> Any:
+    if isinstance(n, list):
+        return [_compact_node(x) for x in n]
+    if not isinstance(n, dict):
+        return n
+    out: dict[str, Any] = {}
+    for k, v in n.items():
+        if k == "title":
+            continue
+        if k in ("properties", "$defs", "definitions") and isinstance(v, dict):
+            out[k] = {pk: _compact_node(pv) for pk, pv in v.items()}  # keys here are names, not keywords
+        elif k == "default":
+            if v is not None and len(json.dumps(v, default=str)) <= _SHORT_DEFAULT:
+                out[k] = v
+        else:
+            out[k] = _compact_node(v)
+    alts = out.get("anyOf")
+    if isinstance(alts, list):
+        rest = [a for a in alts if a != {"type": "null"}]
+        if len(rest) != len(alts):
+            del out["anyOf"]
+            if len(rest) == 1 and isinstance(rest[0], dict):
+                out = {**rest[0], **out}
+            elif rest:
+                out["anyOf"] = rest
+    return out
+
+
+def compact_json_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Same schema without titles, with `X or null` flattened to X, and only short defaults kept."""
+    return _compact_node(schema)
+
+
+def first_paragraph(doc: str) -> str:
+    return (doc or "").strip().split("\n\n", 1)[0].strip()
+
+
+def compact_tool_doc(t: ToolSpec) -> str:
+    """First paragraph of the tool's docstring, without connector limits or client-only advice."""
+    return first_paragraph(t.raw_doc or t.doc)
+
+
+def compact_tool_schema(t: ToolSpec) -> dict[str, Any]:
+    return compact_json_schema(tool_json_schema(t))

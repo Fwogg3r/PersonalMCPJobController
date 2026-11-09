@@ -77,6 +77,7 @@ See [CONNECTORS.md](CONNECTORS.md).
   2. **`claude -p`** on the user's plan (locked down; see below).
   3. **Paid APIs** (Anthropic, OpenAI, OpenRouter, any OpenAI-compatible URL), each with a monthly budget cap enforced from reported usage. Also set provider-side limits, since the price table can go stale.
 - **Skipping.** A provider is skipped when it's disabled, unhealthy, over budget, cooling down after a failure (5 minutes), or lacks a needed capability (`tools`, `vision`, `context_tokens`). Jobs can override the order.
+- **Tool schema size.** A provider with `schema_mode: compact` gets first-paragraph tool descriptions, no schema titles, flattened optional types, and each connector's limits once in the system prompt (default `full`). `pmjc tools size` shows the saving.
 - **Privacy.** `trust: local|cloud` on each provider. A job with `private: true` uses local providers only and fails rather than fall back to the cloud.
 - **Pinned per run.** If the provider fails, or returns invalid JSON when JSON was expected, before any act tool has run, the run restarts on the next provider. After an act tool has run, the run is marked failed, so side effects never repeat.
 - **Start and load commands** run as argv with no shell and a timeout, and can only be changed in `settings.yaml`, never through the API.
