@@ -274,11 +274,11 @@ def test_dashboard_renders_no_remote_images():
 def test_private_output_flags_on_tools():
     from pmjc import registry
     reg = registry.get()
-    public = {"web_search", "web_fetch", "browser_read", "browser_extract", "browser_browse", "craigslist_search",
+    public = {"web_search", "web_fetch", "craigslist_search",
               "ebay_search", "weather_forecast", "places_nearby", "places_geocode"}
     for n in public:
         assert reg.tool(n).private_output is False, n
-    for n in ("pmjc_context", "pmjc_memory_get", "pmjc_thread_get", "fake_read", "fake_send", "browser_act", "pmjc_events_recent"):
+    for n in ("pmjc_context", "pmjc_memory_get", "pmjc_thread_get", "fake_read", "fake_send", "browser_act", "browser_read", "browser_extract", "browser_browse", "pmjc_events_recent"):
         assert reg.tool(n).private_output is True, n
 
 
