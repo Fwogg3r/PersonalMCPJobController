@@ -225,7 +225,7 @@ class Pmjc(Connector):
         return executor.approval_status(approval_id)
 
     @tool(scope="read")
-    async def pmjc_approval_wait(self, approval_id: str, timeout_seconds: int = 600, _caller=None) -> dict:
+    async def pmjc_approval_wait(self, approval_id: str, timeout_seconds: int = 50, _caller=None) -> dict:
         """Wait for the user's decision on an action that returned pending_approval (up to timeout_seconds, max
         1800) and return the real outcome: done with the result, denied, failed or expired. If it returns pending,
         call it again; don't ask the user to prompt you. Only the caller that requested the approval (or an admin)

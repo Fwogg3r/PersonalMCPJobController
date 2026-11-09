@@ -129,7 +129,7 @@ class Settings(BaseModel):
     auto_start_local: bool = False  # start local model servers / load models when a run needs them
     scheduled_jobs_enabled: bool = False  # cron/interval/event jobs; manual runs always work
     approval_ttl_seconds: int = 600
-    approval_wait_seconds: int = 120  # an MCP client's act call waits this long for the owner's decision, then returns pending
+    approval_wait_seconds: int = 50  # under the ~60 s tool-call timeout many MCP clients use; an MCP client's act call waits this long for the owner's decision, then returns pending
     approval_poll_seconds: float = 2.0  # how often a waiter checks the database for a decision made in another process
     audit_retention_days: int = 30
     thread_retention_days: int = 90  # closed threads older than this are deleted
