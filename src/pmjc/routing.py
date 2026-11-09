@@ -327,6 +327,9 @@ def finish(p: Plan, res, thread_id: str, error: str = "") -> dict:
             t = router._starting.get(planned)
             reason = "starting" if t is not None and not t.done() else "not ready"
     pl_tier = p.planned_tier or p.base_tier or p.tier
+    waited = float(getattr(res, "waited_s", 0) or 0) if res is not None else 0.0
+    if waited >= 0.5:
+        p.decision = (p.decision + "; " if p.decision else "") + f"waited {waited:.0f}s for local start"
     try:
         db.x("INSERT INTO routing(ts,thread_id,surface,rule,tier,candidates,provider,fallbacks,turns,tool_errors,tools,"
              "cost_usd,retry_of,override,error,tool_calls,decision) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -359,7 +362,8 @@ def finish(p: Plan, res, thread_id: str, error: str = "") -> dict:
         pf = prefix_for("strong")
         pivot = f"{pf} to stay on the cloud" if pf else ""
     return {"rule": p.rule, "tier": p.tier, "tools": list(p.tools), "tool_errors": p.tool_errors, "override": p.override,
-            "sticky": bool(p.sticky), "retry_of": p.retry_of, "note": note, "pivot": pivot, "decision": p.decision}
+            "sticky": bool(p.sticky), "retry_of": p.retry_of, "note": note, "pivot": pivot, "decision": p.decision,
+            "waited": round(waited)}
 
 
 # --- footer --------------------------------------------------------------------------------------------------
@@ -372,6 +376,8 @@ def footer_line(provider: str, info: dict | None, cost: float) -> str:
     info = info or {}
     bits = [provider + (f" ({info['note']})" if info.get("note") else ""),
             f"rule: {info['rule']}" if info.get("rule") else ""]
+    if info.get("waited"):
+        bits.append(f"waited {info['waited']}s for local start")
     if info.get("tools"):
         bits.append("tools: " + ", ".join(info["tools"][:6]))
     bits.append(f"${cost:.3f}")

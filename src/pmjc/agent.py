@@ -12,12 +12,13 @@ import logging
 import os
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
 
-from . import auth, config, creds, db, executor, memory, registry, results, router, tool_select
+from . import auth, config, creds, db, executor, memory, registry, results, router, routing, tool_select
 from .auth import Caller
 from .config import ProviderConfig
 from .registry import ToolSpec
@@ -51,6 +52,7 @@ class Result:
     cost_usd: float = 0.0
     turns: int = 0
     fell_back: list[str] = field(default_factory=list)  # providers tried before this one, with the reason
+    waited_s: float = 0.0  # seconds this request waited for a local host to start
 
 
 PAGE_TOOL = "pmjc_result_get"
@@ -132,11 +134,62 @@ def _gpu_text(info: dict) -> str:
     return ", ".join(bits) or "in use"
 
 
+LOCAL_START_NOTICE = "_starting the local model, this can take a minute…_"
+
+
+async def _wait_local(p: ProviderConfig, rest: list[ProviderConfig], first: bool, caller: Caller, tried: list[str],
+                      waited: list[float]) -> bool:
+    """An interactive request found local provider `p` down (usable() has kicked off its start). Wait for it when
+    local is all that's left (`rest` = this and later candidates) or, with prefer_local_wait_seconds, when it was the
+    plan's first choice. The wait budget is shared by the whole request."""
+    r = config.load().router
+    only_local = all(c.trust == "local" for c in rest)
+    if only_local:
+        secs = r.local_start_wait_seconds
+    elif first:
+        secs = r.prefer_local_wait_seconds
+    else:
+        secs = 0
+    if secs <= 0:
+        return False
+    if not config.load().auto_start_local:
+        if only_local:
+            tried.append(f"{p.id}: unavailable (not running, and router auto_start_local is off; "
+                         f"start it or turn auto_start_local on)")
+        return False
+    thr = _gpu_guard(p)
+    if thr and not router.gpu_override.get() and router.gpu_busy(thr):
+        return False  # never start or load a model on a busy GPU
+    left = secs - waited[0]
+    if left <= 0:
+        return False
+    notify = getattr(caller, "on_notice", None)
+    if notify:
+        try:
+            await notify(LOCAL_START_NOTICE)
+        except Exception:
+            log.debug("notice failed", exc_info=True)
+    t0 = time.monotonic()
+    ok = await router.wait_ready(p, left)
+    waited[0] += time.monotonic() - t0
+    if not ok and only_local:
+        pf = routing.prefix_for("strong")
+        tried.append(f"{p.id}: unavailable (the local model didn't start in {secs:g} s; try again"
+                     + (f" or use {pf}" if pf else "") + ")")
+    return ok
+
+
 async def _run_candidates(prompt, caller, tools, need, system, max_turns, expect_json, port, cands, tried) -> Result:
-    for p in cands:
+    waited = [0.0]
+    for idx, p in enumerate(cands):
         if not await router.usable(p, need):  # cheap to re-check; no cooldown (a model may be loaded a minute later)
-            tried.append(f"{p.id}: unavailable")
-            continue
+            ok = False
+            if need.interactive and p.trust == "local" and p.kind == "openai_compat":
+                ok = await _wait_local(p, cands[idx:], idx == 0, caller, tried, waited)
+            if not ok:
+                if not any(t.startswith(f"{p.id}: unavailable") for t in tried):
+                    tried.append(f"{p.id}: unavailable")
+                continue
         try:
             if p.kind == "anthropic":
                 res = await _anthropic(p, prompt, caller, tools, system or SYSTEM, max_turns)
@@ -152,7 +205,8 @@ async def _run_candidates(prompt, caller, tools, need, system, max_turns, expect
                         raise RuntimeError(f"{p.id} returned invalid JSON after acting")
                     tried.append(f"{p.id}: invalid JSON")
                     continue  # quality failure: escalate
-            res.fell_back = [t for t in tried if not t.endswith(": unavailable")]
+            res.fell_back = [t for t in tried if ": unavailable" not in t]
+            res.waited_s = waited[0]
             return res
         except Exception as e:
             router.mark_failed(p)

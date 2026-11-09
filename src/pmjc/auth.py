@@ -41,6 +41,7 @@ class Caller:
     approved_write: bool = False  # internal: the owner approved a state write proposed by a tainted run; it is stored untrusted
     seen_urls: set[str] = field(default_factory=set, repr=False, compare=False)  # URLs the run's tools returned or fetched
     on_tool: Callable | None = field(default=None, repr=False, compare=False)  # async (name, args, status); trace hook
+    on_notice: Callable | None = field(default=None, repr=False, compare=False)  # async (text): progress notice (e.g. "starting the local model")
     surface: str = ""  # discord | rest | cli | v1 | job: where the request came from (front-door routing)
     tier_hint: str = ""  # a tier the caller chose explicitly (e.g. /v1 model "pmjc:strong")
 

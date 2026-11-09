@@ -251,6 +251,26 @@ def kick_start(p: ProviderConfig) -> bool:
     return True
 
 
+async def wait_ready(p: ProviderConfig, seconds: float) -> bool:
+    """Start the local host/model (one shared start task per provider; concurrent callers all wait on it) and wait up
+    to `seconds` for it to be ready. False if auto_start_local is off, the start failed, or time ran out."""
+    if seconds <= 0 or not config.load().auto_start_local:
+        return False
+    t = _starting.get(p.id)
+    if t is None or t.done():
+        kick_start(p)
+        t = _starting.get(p.id)
+    if t is None:
+        return False
+    try:
+        await asyncio.wait_for(asyncio.shield(t), seconds)
+    except asyncio.TimeoutError:
+        return False
+    except Exception:
+        return False
+    return await healthy(p, start=False)
+
+
 async def usable(p: ProviderConfig, need: Need) -> bool:
     """Healthy enough to run `need` now. Interactive requests don't wait for a local host: if it is down it is started
     in the background and the caller moves on to the next candidate. Jobs and watches keep the blocking start."""
