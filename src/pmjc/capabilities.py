@@ -59,6 +59,13 @@ CATALOG: list[dict] = [
     {"task": "home devices (lights, switches, scenes)", "pmjc": "ha_states, ha_call_service, or the user's own command tools",
      "needs": ["home_assistant"], "limits": "Protected entities are refused; actions need approval unless auto-approved.",
      "native": "A Home Assistant connector in your client.", "workaround": "-"},
+    {"task": "shopping: search eBay listings (price, condition, buying option, quantity)", "pmjc": "ebay_search (up to 10 queries per call)",
+     "needs": ["ebay"],
+     "limits": "Needs the owner's eBay developer production keyset (App ID + Cert ID; developer.ebay.com, create an app, "
+               "copy the Production keyset, then `pmjc auth set ebay`). Listing titles are third-party text, so a run can make "
+               "only ONE ebay_search call: put every search of a watch into one `queries` list. Quantity and item specifics "
+               "only with details=true (at most 20 lookups per call).",
+     "native": "A shopping or browser connector in your client.", "workaround": "-"},
     {"task": "files on the user's machines", "pmjc": "files_list, files_search, files_read (read-only, allowed folders); "
      "ssh_run for other machines", "needs": ["files", "ssh"],
      "limits": "No writing files through files_*; secret-looking files are never readable.",

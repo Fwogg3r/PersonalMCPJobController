@@ -97,3 +97,12 @@ Wrap tools you already use, such as scripts, CLIs or PowerShell, without writing
 
 ## Declaring limits
 Set `limitations` (what the connector can't do, prerequisites such as where an id comes from) and `native_alternatives` (what a client with better abilities should use) as class attributes on a Python connector, or as top-level keys in a YAML file. The registry appends both to every tool's description (`Limits: ...`, `Better if your client can: ...`), so a model that knows nothing else sees them in the tool list. Also say in each tool's docstring how to get the ids it needs (for example "channel_id comes from discord_channels"). Add the task to `capabilities.CATALOG` and run `uv run scripts/gen_capabilities.py` to refresh [CAPABILITIES.md](CAPABILITIES.md).
+
+## eBay keys (the `ebay` connector)
+
+1. Join the eBay developer program (free): <https://developer.ebay.com/>, then open **Application Keys**.
+2. Create an app (keyset). Use the **Production** keyset (the Sandbox one only sees test listings; set `connectors.ebay.sandbox: true` in settings to use it).
+3. Copy the **App ID (Client ID)** and **Cert ID (Client Secret)**, then enter them yourself: `uv run pmjc auth set ebay` or the dashboard's Connectors tab. They go to the credential store, never to a file.
+4. Optional settings under `connectors.ebay`: `marketplace` (default `EBAY_US`), `sandbox` (default false).
+
+`ebay_search` takes a list of queries (max 10) so a whole watch fits in one call; after a run reads listings it cannot make another egress call.
