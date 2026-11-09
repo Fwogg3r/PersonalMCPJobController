@@ -472,3 +472,25 @@ async def test_continue_after_approval_notes_thread_and_notifies(home, monkeypat
     monkeypatch.setattr(config, "load", lambda: SimpleNamespace(approval_outcome_notify=False, notify_channels=[]))
     await ask.continue_after_approval("a1", {"status": "done", "result": "ok"})
     assert len(sent) == 1
+
+
+async def test_continue_after_approval_taints_per_tool(home, monkeypatch):
+    import time
+    from types import SimpleNamespace
+    from pmjc import ask, config, db, memory, registry
+    tid = memory.thread_new("x", by="t")
+    for aid, tool in (("b1", "safe_act"), ("b2", "reader_act")):
+        db.x("INSERT INTO approvals(id,tool,args,payload_hash,requested_by,reason,status,created,expires,thread_id) "
+             "VALUES(?,?,'{}','h','t','','done',?,?,?)", aid, tool, time.time(), time.time() + 60, tid)
+    flags = []
+
+    async def fake_ask(caller, text, **kw):
+        flags.append(caller.untrusted)
+        return {"answer": "ok"}
+    monkeypatch.setattr(ask, "ask", fake_ask)
+    reg = SimpleNamespace(tool=lambda n: SimpleNamespace(untrusted_output=(n == "reader_act")))
+    monkeypatch.setattr(registry, "get", lambda: reg)
+    monkeypatch.setattr(config, "load", lambda: SimpleNamespace(approval_outcome_notify=False, notify_channels=[]))
+    await ask.continue_after_approval("b1", {"status": "done", "result": "sent"})
+    await ask.continue_after_approval("b2", {"status": "done", "result": "page text"})
+    assert flags == [False, True]

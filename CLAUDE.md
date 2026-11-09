@@ -2,7 +2,7 @@
 
 Read [AGENTS.md](AGENTS.md) first: setup, how agents use pmjc, and the rules for changing code. Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); decisions: [docs/DECISIONS.md](docs/DECISIONS.md).
 
-- Public repo: nothing personal (names, hosts, addresses, tokens, settings, jobs, chat ids) is committed. Real data lives in `PMJC_HOME`; maintainer-only notes go in the gitignored `private/` folder.
+- Public repo: nothing personal (names, hosts, addresses, tokens, settings, jobs, chat ids) is committed. Real data lives in `PMJC_HOME`; maintainer-only notes go in the gitignored `private/` folder. Every feature ships with generic defaults anyone who clones the repo can use (new behavior goes behind config options); the owner's own configs, bot setups and similar go in their private dev-tools repo (`Z:\shared`), never here.
 - Tests: `uv run pytest`. Smoke test: `PMJC_HOME=<temp dir> uv run pmjc serve --port 8799`, never against the owner's real data folder.
 - Don't leave test models loaded on a GPU someone else is using; unload them afterwards (`lms unload --all`).
 

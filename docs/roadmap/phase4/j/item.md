@@ -8,3 +8,5 @@ Live finding: the owner gave a Discord user id and asked to add it to a contact 
 Progress (2026-11-08): quick fix done. ask() now offers pmjc_contact_set, pmjc_memory_set and pmjc_thread_start (deletes, job_run/job_delete and handoff stay out); test test_ask_offers_writer_tools. Implemented by the local model (Qwen3.8-27B via aider) under review. Still to do: problem-solving guidance in ASK_SYSTEM and the approved shell-command fallback.
 
 Progress (2026-11-08, later): problem-solving guidance added as ASK_SYSTEM rule 7 (check pmjc_capabilities, try the closest tool such as pmjc_contact_set/pmjc_memory_set, otherwise name the missing tool, what was tried and the closest workaround); test test_ask_system_has_problem_solving_rule. Still to do: the approved shell-command fallback.
+
+Decided (owner, 2026-11-08) for the shell fallback: who may propose is a config option (public default: untainted runs the owner started; jobs and watches opt in); timeout and output cap are configurable and the model may request other values per command, shown in the approval. See DECISIONS.md. Not built yet.

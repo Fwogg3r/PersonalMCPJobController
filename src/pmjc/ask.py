@@ -137,6 +137,10 @@ async def continue_after_approval(aid: str, res: dict) -> str | None:
         detail = json.dumps(detail, default=str)
     tid = rows[0]["thread_id"]
     caller = Caller(f"approval:{aid}", "job", {"sources", "jobs", "actions"})
+    try:  # per-tool taint (decided 2026-11-08): only results of tools that can return third-party text taint the run
+        caller.untrusted = bool(registry.get().tool(rows[0]["tool"]).untrusted_output) and status == "done"
+    except Exception:
+        caller.untrusted = True  # unknown tool: be safe
     out = await ask(caller, outcome_text(rows[0]["tool"], status, detail), thread_id=tid, history_turns=3)
     with contextlib.suppress(Exception):
         db.x("UPDATE threads SET status='updated', unread=1 WHERE id=?", tid)
