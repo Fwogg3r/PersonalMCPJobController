@@ -1,7 +1,7 @@
 ---
 title: "Browser upgrade: real Chrome, links, interaction and multi-page reads for local models"
 nickname: Browser v2
-status: planned
+status: active
 links: [phase4/u]
 ---
 **What:** Upgrade pmjc's own browser connector so local and cheaper models can do real browsing work without Claude.
@@ -16,3 +16,5 @@ links: [phase4/u]
 - Covers the interactive part of phase4/l and runs in its own process (phase4/c).
 
 **Notes:** Settings used for the first test: `connectors.browser.allowed_domains` now includes `ebay.com` and `craigslist.org` in the owner's settings.yaml.
+
+**Progress 2026-11-09 (first slice):** `browser_read` now returns `links` (absolute, deduplicated, `max_links` default 40, cap 200); new `browser_extract(url, selector, fields, max_items)` returns rows from a CSS row selector and a field map (`"a@href"` reads an attribute, hrefs made absolute); both use the `allowed_domains` check. Jobs (`read_urls`, `read_sites`) and watch specs may declare reads; `executor.declared_read` lets a matching `browser_read`/`browser_extract` URL through after taint. Only owners can set the lists: `save_job` clears them for non-admin creators and `watches.start` drops them from non-admin specs. New options `connectors.browser.channel` (default empty) and `connectors.browser.headless` (default true); headed windows open on the rightmost monitor without taking focus. Tests in `tests/test_browser.py` use a fake page; the in-page JS was not run in a real browser. Left: interaction tools (scroll, click, type, wait-for), running the browser in its own process (phase4/c), verifying headed Chrome on the owner's setup.

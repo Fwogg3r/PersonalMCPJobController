@@ -12,6 +12,7 @@ import logging
 import secrets
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 from . import auth, config, db, memory, registry, shell
 from .auth import Caller
@@ -25,6 +26,22 @@ class Denied(Exception):
 
 def payload_hash(tool: str, args: dict) -> str:
     return hashlib.sha256(json.dumps([tool, args], sort_keys=True, default=str).encode()).hexdigest()
+
+
+DECLARED_READ_TOOLS = {"browser_read", "browser_extract"}  # read tools whose `url` the owner may fix in advance
+
+
+def declared_read(caller: Caller, name: str, args: dict) -> bool:
+    """True when `name` is a declared-read tool and its url is one the owner listed (read_urls exact, read_sites by
+    domain) in the stored job/watch definition. The owner fixed the URL, so it isn't model-chosen egress."""
+    if name not in DECLARED_READ_TOOLS or not (caller.read_urls or caller.read_sites):
+        return False
+    url = str(args.get("url") or "")
+    if url in caller.read_urls:
+        return True
+    p = urlparse(url)
+    host = (p.hostname or "").lower()
+    return p.scheme in ("http", "https") and any(host == d.lower() or host.endswith("." + d.lower()) for d in caller.read_sites)
 
 
 def _route(res: Any, tid: str | None) -> None:
@@ -84,7 +101,7 @@ async def _call_tool(caller: Caller, name: str, args: dict | None, reason: str) 
     if not caller.can(need):
         db.audit(caller.name, name, h, "denied", f"missing scope {need}")
         raise Denied(f"{caller.name} lacks scope '{need}' for {name}")
-    if t.egress and caller.untrusted:
+    if t.egress and caller.untrusted and not declared_read(caller, name, args):
         db.audit(caller.name, name, h, "denied", "egress after untrusted content")
         raise Denied(f"{name} sends data off the machine and this run has read untrusted content; "
                      "start a fresh run or ask the user")

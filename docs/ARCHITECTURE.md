@@ -58,6 +58,7 @@ Code map (`src/pmjc/`):
 
 ## Connector contract
 See [CONNECTORS.md](CONNECTORS.md).
+- **Browser.** `browser_read` (text plus links) and `browser_extract` (rows from a CSS selector and field map) share one persistent profile and the `allowed_domains` check. Options: `connectors.browser.channel` (empty = bundled Chromium, `chrome` = installed Chrome) and `headless` (default true; headed windows open on the rightmost monitor without taking focus).
 - **Tags.** `@tool(scope="read"|"act"|"jobs", untrusted_output=..., egress=...)`. The default is `act`. YAML tools default to act, untrusted output and egress.
 - **Tool names** are `<connector>_<verb>`: letters, digits and underscores, at most 64 characters, checked when the connector loads.
 - **Credential fields:** secrets go to the credential store; `secret=False` fields go to `settings.yaml`. There are `oauth2` (`OAuth2Mixin`: authorization code + PKCE, refresh under a lock) and browser-login flows.
@@ -91,7 +92,7 @@ See [CONNECTORS.md](CONNECTORS.md).
 - **Files.** A job is a YAML file in `PMJC_HOME/jobs/` (examples in `examples/jobs/`). The schedule is rebuilt from the files at start and whenever they change (APScheduler 3, coalesce, misfire grace period).
 - **Triggers:** `cron`, `interval`, an `event` filter, a webhook (`/hooks/<name>` creates an event), or `manual`.
 - **Tiers:** plain-code `match` filters (app, contains, regex, data) and dedupe first; the agent loop only if they pass.
-- **Taint is derived, not declared.** A run is tainted once its trigger event is untrusted or it calls an `untrusted_output` tool. A tainted run can't call `egress` tools, and every act tool goes to approval, even ones on the auto-approve list.
+- **Taint is derived, not declared.** A run is tainted once its trigger event is untrusted or it calls an `untrusted_output` tool. A tainted run can't call `egress` tools, and every act tool goes to approval, even ones on the auto-approve list. One exception: `browser_read`/`browser_extract` on a URL or site the owner declared in the job (`read_urls`, `read_sites`) or watch spec, since the owner fixed it (`executor.declared_read`; see DECISIONS).
 - **No escalation.** A job can't give itself more than its creator has: scopes are limited to `sources` and `actions`, and `auto_approve` is honoured only in jobs the owner wrote (CLI, dashboard, the file). Jobs can't create jobs.
 - **Output** goes to the job's notify channels. `NOTHING` or empty means no notification.
 

@@ -66,6 +66,8 @@ class Job(BaseModel):
     max_turns: int = 10
     expect_json: bool = False
     auto_approve: list[str] = Field(default_factory=list)  # only honoured in files the owner wrote
+    read_urls: list[str] = Field(default_factory=list)  # exact URLs browser reads may fetch after taint (owner files only)
+    read_sites: list[str] = Field(default_factory=list)  # domains likewise (owner files only)
     cooldown_seconds: int = 0  # minimum time between runs
     file: str = ""
 
@@ -99,6 +101,7 @@ def save_job(job: Job, created_by: Caller | None = None) -> Path:
         raise ValueError("job name: lowercase letters, digits, - and _ only")
     if created_by is not None and created_by.kind != "admin":
         job.scopes = [s for s in job.scopes if s in ("sources", "actions") and created_by.can(s)]
+        job.read_urls, job.read_sites = [], []  # declared reads are the owner's too, never a model's
         job.auto_approve = []  # only the owner (CLI, dashboard, editing the file) can pre-approve actions
     else:
         job.scopes = [s for s in job.scopes if s in ("sources", "actions")]
@@ -291,7 +294,8 @@ class Engine:
         self._last_run[name] = now
         rid = db.x("INSERT INTO runs(job,trigger,status,started,thread_id) VALUES(?,?,?,?,?)", name, trigger, "running", now, thread_id)
         caller = Caller(f"job:{name}", "job", set(job.scopes) & {"sources", "actions"},
-                        auto_approve=set(job.auto_approve), allowed_tools=set(job.tools) if job.tools else None)
+                        auto_approve=set(job.auto_approve),
+                        read_urls=tuple(job.read_urls), read_sites=tuple(job.read_sites), allowed_tools=set(job.tools) if job.tools else None)
         caller.thread_id = thread_id if memory.thread_exists(thread_id) else None
         prompt = job.prompt
         if event is not None:
