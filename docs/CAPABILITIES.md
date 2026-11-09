@@ -100,6 +100,14 @@ Pick the **most native route**: your client's own abilities first (if it can act
 - **Better if your client can:** A shopping or browser connector in your client.
 - **Workaround:** -
 
+## Web research: search the web and read ordinary pages
+
+- **pmjc:** web_search (up to 5 queries per call), web_fetch (up to 5 URLs per call, readable text)
+- **Needs:** web
+- **Limits:** web_search needs a backend the owner configures (self-hosted SearXNG or a Brave Search API key; see docs/CONNECTORS.md). web_fetch is plain HTTP: no JavaScript, no logins, text only (8000 characters per page by default, 2 MB download cap); private, local and blocked domains are refused. Results are third-party text, so a run can make only ONE web_search and ONE web_fetch call after reading web content: put every query or URL into one list. web_fetch of owner-declared read_urls/read_sites stays allowed after taint.
+- **Better if your client can:** Your client's own web search and fetch tools.
+- **Workaround:** browser_read for pages that need a login or scripts.
+
 ## Files on the user's machines
 
 - **pmjc:** files_list, files_search, files_read (read-only, allowed folders); ssh_run for other machines

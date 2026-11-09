@@ -28,20 +28,29 @@ def payload_hash(tool: str, args: dict) -> str:
     return hashlib.sha256(json.dumps([tool, args], sort_keys=True, default=str).encode()).hexdigest()
 
 
-DECLARED_READ_TOOLS = {"browser_read", "browser_extract"}  # read tools whose `url` the owner may fix in advance
+DECLARED_READ_TOOLS = {"browser_read", "browser_extract", "web_fetch"}  # read tools whose url(s) the owner may fix in advance
 
 
-def declared_read(caller: Caller, name: str, args: dict) -> bool:
-    """True when `name` is a declared-read tool and its url is one the owner listed (read_urls exact, read_sites by
-    domain) in the stored job/watch definition. The owner fixed the URL, so it isn't model-chosen egress."""
-    if name not in DECLARED_READ_TOOLS or not (caller.read_urls or caller.read_sites):
-        return False
-    url = str(args.get("url") or "")
+def _url_declared(caller: Caller, url: str) -> bool:
     if url in caller.read_urls:
         return True
     p = urlparse(url)
     host = (p.hostname or "").lower()
     return p.scheme in ("http", "https") and any(host == d.lower() or host.endswith("." + d.lower()) for d in caller.read_sites)
+
+
+def declared_read(caller: Caller, name: str, args: dict) -> bool:
+    """True when `name` is a declared-read tool and its url (for web_fetch: every url in `urls`) is one the owner listed
+    (read_urls exact, read_sites by domain) in the stored job/watch definition. The owner fixed the URL, so it isn't
+    model-chosen egress."""
+    if name not in DECLARED_READ_TOOLS or not (caller.read_urls or caller.read_sites):
+        return False
+    if name == "web_fetch":
+        urls = args.get("urls")
+        if isinstance(urls, str):
+            urls = [urls]
+        return isinstance(urls, list) and bool(urls) and all(isinstance(u, str) and _url_declared(caller, u) for u in urls)
+    return _url_declared(caller, str(args.get("url") or ""))
 
 
 def _route(res: Any, tid: str | None) -> None:

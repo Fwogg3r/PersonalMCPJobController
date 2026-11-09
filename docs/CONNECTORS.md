@@ -106,3 +106,14 @@ Set `limitations` (what the connector can't do, prerequisites such as where an i
 4. Optional settings under `connectors.ebay`: `marketplace` (default `EBAY_US`), `sandbox` (default false).
 
 `ebay_search` takes a list of queries (max 10) so a whole watch fits in one call; after a run reads listings it cannot make another egress call.
+
+## Web search and page fetch (the `web` connector)
+
+`web_search` (up to 5 queries per call) and `web_fetch` (up to 5 URLs per call, readable text) give runs on local models the reach of a client's own web tools. Both return third-party text and send queries/URLs off the machine, so after one call a run is tainted and can't make another egress call: the model puts everything into one list. `web_fetch` also stays allowed after taint for URLs the owner declared in a job or watch (`read_urls`, `read_sites`; every URL in the call must match).
+
+Pick a search backend under `connectors.web` in settings (`web_fetch` works without one):
+
+- **SearXNG (self-hosted, free, private).** Run an instance, add `json` to `search.formats` in its `settings.yml` (it is off by default), then set `backend: searxng` and `searxng_url: http://host:8080`.
+- **Brave Search API.** Create a key at <https://api.search.brave.com/>, set `backend: brave`, then enter the key yourself with `uv run pmjc auth set web` (or the dashboard). It goes to the credential store, never to a file.
+
+Other options: `blocked_domains` (list; subdomains included), `allow_private` (default false: addresses that resolve to loopback, private, link-local or similar ranges are refused after DNS resolution, redirects included), `max_bytes` (download cap, default 2000000). Fetching is plain HTTP with no JavaScript or logins; use `browser_read` for those.
