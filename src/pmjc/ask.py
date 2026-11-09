@@ -9,7 +9,7 @@ from __future__ import annotations
 import contextlib
 import json
 
-from . import agent, db, defang, executor, memory, registry, router
+from . import agent, db, defang, executor, memory, registry, router, tool_select
 from .auth import Caller
 
 ASK_SYSTEM = agent.SYSTEM + """
@@ -82,7 +82,7 @@ def recent(limit: int = 20) -> list[dict]:
     return db.q("SELECT id, text, ts, provider FROM asks ORDER BY ts DESC LIMIT ?", limit)
 
 
-def history(thread_id: str, turns: int) -> tuple[str, bool, bool]:
+def history(thread_id: str, turns: int, include_untrusted: bool = True) -> tuple[str, bool, bool]:
     """The thread's last `turns` exchanges as plain text for the prompt, whether any of it is third-party content (then
     the run counts as tainted, like any run that reads untrusted data), and whether it is sensitive (any history is:
     earlier answers and requests may hold the user's private data, so a run that gets it starts out `sensitive`)."""
@@ -90,6 +90,8 @@ def history(thread_id: str, turns: int) -> tuple[str, bool, bool]:
                 thread_id, max(turns, 0) * 3)[::-1]
     lines, tainted = [], False
     for r in rows:
+        if r["trust"] == "untrusted" and not include_untrusted:
+            continue  # e.g. choosing tools (tool_select) may only look at trusted turns
         label = {"request": "User", "answer": "You"}.get(r["kind"], r["kind"])
         if r["trust"] == "untrusted":
             tainted = True
@@ -125,6 +127,7 @@ async def ask(caller: Caller, text: str, private: bool = False, provider_order: 
             prompt = f"Earlier in this conversation:\n{past}\n\nThe user's new message:\n{text}"
         caller.untrusted = caller.untrusted or tainted
         caller.sensitive = caller.sensitive or private
+    caller.select_hint = tool_select.trusted_hint(thread_id, text, history_turns if thread_exists_before else 0)
     if text.startswith(APPROVAL_MARK):
         caller.sensitive = True  # an approved action's result detail: may hold private data
     memory.thread_add(thread_id, "request", text, author=caller.name, trust=memory.trust_of(caller))

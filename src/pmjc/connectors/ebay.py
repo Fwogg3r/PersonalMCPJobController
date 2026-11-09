@@ -63,6 +63,7 @@ def compact(s: dict) -> dict:
 
 class Ebay(Connector):
     id = "ebay"
+    aliases = ['ebay', 'buy', 'listing', 'price', 'deal', 'auction', 'for sale']  # request words that select this connector (tool_mode: select)
     name = "eBay (Browse API)"
     description = "Search eBay listings as structured rows (price, condition, buying option, quantity, seller, link)."
     docs_url = "https://developer.ebay.com/api-docs/buy/browse/overview.html"

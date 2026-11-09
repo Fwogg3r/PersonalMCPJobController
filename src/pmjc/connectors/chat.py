@@ -7,6 +7,7 @@ from ..connector import Connector, Field, Health, tool
 
 class Discord(Connector):
     id = "discord"
+    aliases = ['discord', 'dm', 'direct message']  # request words that select this connector (tool_mode: select)
     name = "Discord (bot)"
     description = ("Read and post in servers where your bot is a member (enable the Message Content intent). "
                    "Bots can't read your personal DMs; use Windows notifications for those.")
@@ -100,6 +101,7 @@ class Discord(Connector):
 
 class Telegram(Connector):
     id = "telegram"
+    aliases = ['telegram']  # request words that select this connector (tool_mode: select)
     limitations = 'Acts as the bot, never as the user; reads only messages sent to the bot.'
     native_alternatives = 'a Telegram connector signed in as the user.'
     name = "Telegram (bot)"
@@ -138,6 +140,7 @@ class Telegram(Connector):
 
 class Slack(Connector):
     id = "slack"
+    aliases = ['slack']  # request words that select this connector (tool_mode: select)
     limitations = 'Acts as the app, never as the user; sees only channels it was invited to.'
     native_alternatives = 'a Slack connector signed in as the user.'
     name = "Slack (bot)"
@@ -181,6 +184,7 @@ class Slack(Connector):
 
 class Ntfy(Connector):
     id = "ntfy"
+    aliases = ['ntfy', 'push notification']  # request words that select this connector (tool_mode: select)
     limitations = 'Push notifications to the user only; one-way.'
     name = "ntfy (push notifications)"
     description = "Free push notifications to the ntfy phone app. Pick a long random topic name; it acts as a password."
@@ -203,6 +207,7 @@ class Ntfy(Connector):
 
 class Webhook(Connector):
     id = "webhook"
+    aliases = ['webhook']  # request words that select this connector (tool_mode: select)
     limitations = 'Posts to one configured URL; one-way.'
     name = "Outgoing webhook"
     description = "POSTs notifications as JSON to any URL (n8n, Zapier, Make, Home Assistant webhooks, IFTTT, ...)."

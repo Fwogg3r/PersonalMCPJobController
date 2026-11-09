@@ -9,6 +9,7 @@ from ..connector import Connector, tool
 
 class Pmjc(Connector):
     id = "pmjc"
+    aliases = ['handoff', 'hand off', 'approval', 'approve', 'shell', 'job', 'events', 'recent runs', 'pmjc']  # request words that select this connector (tool_mode: select)
     name = "pmjc"
     description = "Context across sessions (threads, notes, contacts), events, jobs, watches and approvals inside pmjc."
     limitations = ("Watches and jobs run only while the pmjc service runs; event watches see only what the pmjc PC "
@@ -29,7 +30,10 @@ class Pmjc(Connector):
         workaround that comes closest to how the user would do it themselves. task: a few words ("send a message",
         "weather"); omit for everything. Use it before telling the user something isn't possible."""
         connected = {i for c in registry.get().connectors.values() if c.configured() for i in (c.id, c.type_id)}
-        return capabilities.capabilities(task, connected, tainted=bool(_caller and _caller.untrusted))
+        out = capabilities.capabilities(task, connected, tainted=bool(_caller and _caller.untrusted))
+        sel = getattr(_caller, "tool_select", None)  # tool_mode select: this call is also the loader
+        note = sel.load(task, out) if sel is not None else None
+        return out + [note] if note else out
 
     @tool(scope="read")
     async def pmjc_result_get(self, id: str, offset: int = 0, max_chars: int | None = None, _caller=None) -> dict:

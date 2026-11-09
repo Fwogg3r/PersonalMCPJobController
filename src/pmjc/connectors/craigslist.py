@@ -81,6 +81,7 @@ def map_item(item: list, decode: dict | None = None, host: str = "www.craigslist
 
 class Craigslist(Connector):
     id = "craigslist"
+    aliases = ['craigslist', 'buy', 'listing', 'price', 'deal', 'for sale', 'classified']  # request words that select this connector (tool_mode: select)
     name = "Craigslist (public search feed)"
     description = "Search Craigslist posts as compact rows (title, price, location, posted, link). No key needed."
     docs_url = "https://www.craigslist.org/"

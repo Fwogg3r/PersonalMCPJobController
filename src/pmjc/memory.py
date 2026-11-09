@@ -40,6 +40,7 @@ CREATE INDEX IF NOT EXISTS thread_items_t ON thread_items(thread_id, ts);
 CREATE TABLE IF NOT EXISTS thread_acts (
   id INTEGER PRIMARY KEY, thread_id TEXT, ts REAL, tool TEXT, payload_hash TEXT, approval_id TEXT);
 CREATE INDEX IF NOT EXISTS thread_acts_t ON thread_acts(thread_id, tool, payload_hash);
+CREATE TABLE IF NOT EXISTS thread_tools (thread_id TEXT, connector TEXT, ts REAL, PRIMARY KEY(thread_id, connector));
 CREATE TABLE IF NOT EXISTS reply_routes (peer TEXT PRIMARY KEY, thread_id TEXT, ts REAL);
 CREATE TABLE IF NOT EXISTS notes (
   key TEXT PRIMARY KEY, value TEXT, tags TEXT, updated REAL, author TEXT, trust TEXT DEFAULT 'agent');
@@ -153,6 +154,22 @@ def thread_make_private(tid: str) -> None:
     """Sticky: a private thread never becomes non-private (its content may be personal)."""
     _init()
     db.x("UPDATE threads SET private=1 WHERE id=?", tid)
+
+
+def thread_tools(tid: str | None) -> list[str]:
+    """Connector ids whose tools earlier runs of this thread loaded or used (the sticky set for tool_mode: select)."""
+    _init()
+    if not tid:
+        return []
+    return [r["connector"] for r in db.q("SELECT connector FROM thread_tools WHERE thread_id=? ORDER BY connector", tid)]
+
+
+def thread_tools_add(tid: str | None, connectors) -> None:
+    _init()
+    if not tid or not thread_exists(tid):
+        return
+    for cid in connectors:
+        db.x("INSERT OR IGNORE INTO thread_tools(thread_id,connector,ts) VALUES(?,?,?)", tid, cid, time.time())
 
 
 def thread_add(tid: str, kind: str, text: str, author: str = "", trust: str = "agent", data: Any = None,

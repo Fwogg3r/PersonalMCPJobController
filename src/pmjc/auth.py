@@ -34,6 +34,8 @@ class Caller:
     sensitive: bool = False  # the run has received the user's private data (model.md, notes, thread history, private tool
     # results). Derived and fail-closed, like `untrusted`. Only tracked for now: a later research sub-run (web tools only,
     # nothing private in its prompt) will be refused once its parent is sensitive, so private data can't ride into web queries.
+    select_hint: str | None = None  # text that picks connectors for a select-mode provider (request + trusted history)
+    tool_select: object | None = field(default=None, repr=False, compare=False)  # tool_select.Selection of the current run
     approved_write: bool = False  # internal: the owner approved a state write proposed by a tainted run; it is stored untrusted
     seen_urls: set[str] = field(default_factory=set, repr=False, compare=False)  # URLs the run's tools returned or fetched
     on_tool: Callable | None = field(default=None, repr=False, compare=False)  # async (name, args, status); trace hook

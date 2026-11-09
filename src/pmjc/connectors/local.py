@@ -27,6 +27,7 @@ def _run(argv: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
 
 class Files(Connector):
     id = "files"
+    aliases = ['file', 'folder', 'directory', 'document']  # request words that select this connector (tool_mode: select)
     limitations = "Read-only, only inside folders from files_roots; secret-looking files are never readable. Can't write or delete."
     native_alternatives = "your client's file tools if it runs on that machine."
     name = "Files (read-only)"
@@ -129,6 +130,7 @@ class Files(Connector):
 
 class PcStatus(Connector):
     id = "pc"
+    aliases = ['cpu', 'ram', 'gpu', 'disk', 'process', 'pc status', 'computer']  # request words that select this connector (tool_mode: select)
     limitations = 'Only the machine pmjc runs on. Read-only.'
     name = "This PC"
     description = "CPU, memory, disks, GPU, uptime and the busiest processes on the PC running pmjc."
@@ -200,6 +202,7 @@ class Ssh(Connector):
     Login is always non-interactive (BatchMode): keys or an agent, never passwords.
     """
     id = "ssh"
+    aliases = ['ssh', 'server', 'remote machine', 'run command', 'script']  # request words that select this connector (tool_mode: select)
     limitations = 'Only machines configured in pmjc (ssh_machines); every command needs approval. No interactive sessions.'
     native_alternatives = "your client's shell if it runs on that machine."
     name = "Remote machines (SSH)"
@@ -274,6 +277,7 @@ class Ssh(Connector):
 
 class LmStudio(Connector):
     id = "lmstudio"
+    aliases = ['lm studio', 'local model', 'llm']  # request words that select this connector (tool_mode: select)
     limitations = 'Local models only; ask uses already-loaded models, loading needs approval and uses GPU memory. Unload when done.'
     name = "LM Studio hosts"
     description = "Your local models: what's downloaded and loaded on each host, and asking one directly."
