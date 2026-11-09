@@ -74,12 +74,18 @@ CATALOG: list[dict] = [
                "and ONE web_fetch call after reading web content: put every query or URL into one list. web_fetch of owner-declared "
                "read_urls/read_sites stays allowed after taint.",
      "native": "Your client's own web search and fetch tools.", "workaround": "browser_read for pages that need a login or scripts."},
+    {"task": "shopping: search Craigslist posts (price, area, link)", "pmjc": "craigslist_search (up to 10 queries per call)",
+     "needs": ["craigslist"],
+     "limits": "Uses Craigslist's undocumented JSON feed (field layout unverified). Each query needs an area: a numeric "
+               "area id, or a name the owner mapped in connectors.craigslist.areas. Post titles are third-party text, so a "
+               "run can make only ONE craigslist_search call: put every search into one `queries` list.",
+     "native": "A shopping or browser connector in your client.", "workaround": "browser_read on a Craigslist search page."},
     {"task": "files on the user's machines", "pmjc": "files_list, files_search, files_read (read-only, allowed folders); "
      "ssh_run for other machines", "needs": ["files", "ssh"],
      "limits": "No writing files through files_*; secret-looking files are never readable.",
      "native": "Your client's file tools if it runs on that machine.", "workaround": "ssh_run (approval) to change files."},
-    {"task": "web pages that need the user's login", "pmjc": "browser_read (text and links), browser_extract (rows by CSS selector) in pmjc's own signed-in browser, allowed domains",
-     "needs": ["browser"], "limits": "Read-only: it can't click, type or submit. After a run has read one page, further reads are refused unless the owner declared the URL or site (read_urls/read_sites) in the job or watch.",
+    {"task": "web pages that need the user's login", "pmjc": "browser_read (text and links), browser_extract (rows by CSS selector), browser_browse (scroll, wait, expand without submitting; read-only), browser_act (type, press keys, click anything; needs approval) in pmjc's own signed-in browser, allowed domains",
+     "needs": ["browser"], "limits": "browser_read/extract/browse can't type or submit; browser_act can and needs approval (max 10 steps per call). After a run has read one page, further reads are refused unless the owner declared the URL or site (read_urls/read_sites) in the job or watch.",
      "native": "Browser or computer control in your client.",
      "workaround": "pmjc_handoff with the link, so the user opens it themselves."},
     {"task": "run a command or script", "pmjc": "ssh_run, the user's command tools (kind: command YAML)", "needs": ["ssh"],
