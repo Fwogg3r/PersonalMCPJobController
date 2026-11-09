@@ -23,3 +23,5 @@ links: [phase4/k]
 Follow-up (2026-11-09, review): without a client conversation id, a chat is identified by its first question plus first answer (new chats always get a new thread), so two chats opening with the same line no longer merge. Set public_url for phone apps (relative approve links).
 
 Fix (2026-11-09): with Google OAuth on, FastMCP required openid+email on every /mcp token, so pmjc bearer tokens got 403 (found when connecting a phone chat app over MCP). PmjcVerifier now adds the OAuth transport scopes to tokens pmjc verified itself; pmjc scopes are still checked per tool. Test test_pmjc_tokens_satisfy_oauth_transport_scopes.
+
+Fix 2 (2026-11-09): the Google provider normalises "email" to the full userinfo.email scope URL, so the transport scopes are now taken from the built provider. Verified through the public URL (initialize returns 200 with a pmjc token) and from the owner's phone app.

@@ -237,9 +237,10 @@ def build_auth(base_url: str | None = None):
     else:
         from fastmcp.server.auth.providers.google import GoogleProvider as P
         extra["required_scopes"] = ["openid", "email"]
-    verifier.transport_scopes = tuple(extra.get("required_scopes", ()))
     server = P(client_id=cid, client_secret=secret, base_url=s.oauth.base_url,
                jwt_signing_key=auth.signing_key().hex(), require_authorization_consent=True, **extra)
+    # the provider normalises names (Google: "email" -> ".../auth/userinfo.email"), so take its final list
+    verifier.transport_scopes = tuple(getattr(server, "required_scopes", None) or extra.get("required_scopes", ()))
     return MultiAuth(server=server, verifiers=[verifier])
 
 
