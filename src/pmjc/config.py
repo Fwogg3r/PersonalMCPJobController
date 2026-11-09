@@ -48,10 +48,23 @@ class ProviderConfig(BaseModel):
     capabilities: list[str] = Field(default_factory=lambda: ["tools"])
     context_tokens: int = 32000
     schema_mode: str = "full"  # full | compact: compact sends shorter tool descriptions and schemas (small-context models)
+    max_result_chars: int | None = None  # cap on one tool result sent to the model; None: derived from context_tokens
+    condense_at: float = 0.7  # condense older turns when the prompt passes this share of (context_tokens - reserve_tokens)
+    reserve_tokens: int = 2048  # room kept for the model's answer
     monthly_budget_usd: float | None = None
     price_in_per_mtok: float = 0.0
     price_out_per_mtok: float = 0.0
     extra: dict[str, Any] = Field(default_factory=dict)
+
+
+def result_cap(p: ProviderConfig) -> int:
+    """Chars of one tool result sent to the model: explicit value, else ~4000 up to 32k context, rising to 20000 at 128k."""
+    if p.max_result_chars:
+        return max(200, p.max_result_chars)
+    ctx = p.context_tokens
+    if ctx <= 32000:
+        return 4000
+    return int(min(20000, 4000 + (ctx - 32000) * 16000 / 96000))
 
 
 def default_providers() -> list[ProviderConfig]:
@@ -144,6 +157,7 @@ class Settings(BaseModel):
     disabled_connectors: list[str] = Field(default_factory=list)
     enabled_plugins: list[str] = Field(default_factory=list)  # entry-point connector names allowed to load
     auto_approve: list[str] = Field(default_factory=list)  # act tools that run without approval (any caller)
+    result_ttl_hours: float = 24.0  # how long a clipped tool result stays pageable with pmjc_result_get
     approval_outcome_notify: bool = True  # notify channels get the follow-up after an approval decided outside Discord
     # Approved shell-command fallback (tool pmjc_shell_run; always needs approval, never from a tainted run).
     # Who may propose: "owner" (chats the owner started: Discord door, REST, CLI, MCP clients), "jobs", "watches".

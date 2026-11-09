@@ -32,6 +32,14 @@ class Pmjc(Connector):
         return capabilities.capabilities(task, connected, tainted=bool(_caller and _caller.untrusted))
 
     @tool(scope="read")
+    async def pmjc_result_get(self, id: str, offset: int = 0, max_chars: int | None = None, _caller=None) -> dict:
+        """Read the next slice of a tool result that was cut short ("[truncated: ... call pmjc_result_get(id=...)]").
+        id: the handle from the note; offset: where to continue. Only works for results from this thread or run, for
+        a limited time. The slice is as trustworthy as the original result (third-party text stays third-party)."""
+        from .. import results
+        return results.get(_caller, id, offset, max_chars or 4000)
+
+    @tool(scope="read")
     async def pmjc_threads_recent(self, status: str | None = None, include_closed: bool = False, limit: int = 20) -> list[dict]:
         """Threads (requests, watches, handoffs), unread and updated first. Titles and one-line summaries only, never
         third-party text. status: open, waiting, updated or closed. Read one with pmjc_thread_get."""
