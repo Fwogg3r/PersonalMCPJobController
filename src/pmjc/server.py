@@ -589,6 +589,9 @@ def create_app() -> FastAPI:
         db.audit("admin", "kill_switch", "", "ok", f"revoked {n}")
         return {"revoked": n, "scheduler": "paused", "next": "create a new admin token with `pmjc token create --admin`"}
 
+    from . import openai_door
+    openai_door.register(app, bearer, need)  # /v1/models, /v1/chat/completions (docs/FRONT_DOOR.md)
+
     app.mount("/", mcp_app)  # /mcp (+ OAuth discovery routes when enabled); must be last
     return app
 
