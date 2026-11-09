@@ -30,6 +30,12 @@ class Caller:
     acted: bool = False  # an act tool has executed in this run (no provider fallback after this)
     read_urls: tuple[str, ...] = ()  # owner-declared exact URLs a browser read may fetch even after taint
     read_sites: tuple[str, ...] = ()  # owner-declared domains (and subdomains) likewise; set only from stored job/watch definitions
+    read_prefixes: tuple[str, ...] = ()  # owner-declared URL prefixes (scheme+host+path start) likewise; stored definitions only
+    sensitive: bool = False  # the run has received the user's private data (model.md, notes, thread history, private tool
+    # results). Derived and fail-closed, like `untrusted`. Only tracked for now: a later research sub-run (web tools only,
+    # nothing private in its prompt) will be refused once its parent is sensitive, so private data can't ride into web queries.
+    approved_write: bool = False  # internal: the owner approved a state write proposed by a tainted run; it is stored untrusted
+    seen_urls: set[str] = field(default_factory=set, repr=False, compare=False)  # URLs the run's tools returned or fetched
     on_tool: Callable | None = field(default=None, repr=False, compare=False)  # async (name, args, status); trace hook
 
     def can(self, scope: str) -> bool:

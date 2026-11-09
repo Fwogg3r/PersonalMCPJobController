@@ -87,7 +87,7 @@ async def test_reply_lands_in_the_thread_that_sent_the_dm(door):
     assert door.prompts == []
     (_, body), = door.api.sent()
     assert body["content"].startswith(f"**DM from alex** (@alex, id {STRANGER}) re: plans with alex\n> sure, 6 works")
-    past, tainted = ask.history(tid, 3)
+    past, tainted, _sens = ask.history(tid, 3)
     assert "sure, 6 works" in past and "third-party content" in past and tainted
     m2 = msg("bringing snacks", author=STRANGER, channel="dm2", guild=None, mid="m9")
     m2["author"].update(username="alex")
@@ -384,3 +384,27 @@ async def test_approval_result_continues_the_conversation(door):
     await asyncio.gather(*list(door._tasks))
     assert len(door.prompts) == before + 1
     assert "[approval result]" in door.prompts[-1] and "fake_send" in door.prompts[-1]
+
+
+async def test_tainted_answers_suppress_embeds_and_defang_links(door, monkeypatch):
+    from pmjc import agent
+
+    async def tainted_run(prompt, caller, tools, need, system=None, max_turns=12, **kw):
+        caller.untrusted = True
+        return agent.Result(text="see https://evil.test/i.png?d=secret", provider="fake-model")
+    monkeypatch.setattr(agent, "run", tainted_run)
+    await door.on_message(msg("hi", channel="dm5", guild=None))
+    (path, body), = door.api.sent("dm5")
+    assert body["flags"] == 4  # SUPPRESS_EMBEDS
+    assert "secret" not in body["content"] and "hxxps://evil[.]test/i.png" in body["content"]
+
+
+async def test_clean_answers_keep_links_and_embeds(door, monkeypatch):
+    from pmjc import agent
+
+    async def clean_run(prompt, caller, tools, need, system=None, max_turns=12, **kw):
+        return agent.Result(text="see https://example.org/a?x=1", provider="fake-model")
+    monkeypatch.setattr(agent, "run", clean_run)
+    await door.on_message(msg("hi", channel="dm6", guild=None))
+    (path, body), = door.api.sent("dm6")
+    assert "flags" not in body and "https://example.org/a?x=1" in body["content"]

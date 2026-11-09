@@ -150,7 +150,7 @@ class Ebay(Connector):
         return {"query": q.get("q"), "total": d.get("total"),
                 "rows": [compact(s) for s in d.get("itemSummaries") or []]}
 
-    @tool(scope="read", untrusted_output=True, egress=True)
+    @tool(scope="read", untrusted_output=True, egress=True, private_output=False)
     async def ebay_search(self, queries: list[dict], details: bool = False, currency: str = "USD") -> list[dict]:
         """Search eBay for several things in ONE call (up to 10 queries; a run can only call this once after it reads
         listings). Each query: q, max_price, min_price, buying_options (FIXED_PRICE|AUCTION|BEST_OFFER), conditions

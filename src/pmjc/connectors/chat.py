@@ -89,11 +89,13 @@ class Discord(Connector):
         if aid and discord_door.running():  # the door handles button clicks; no public URL needed
             await self._api("POST", f"/channels/{ch}/messages",
                             json={"content": f"**{title}**\n{message}"[:2000], "allowed_mentions": {"parse": []},
-                                  "components": discord_door.approval_buttons(aid)})
+                                  "flags": 4, "components": discord_door.approval_buttons(aid)})
             return
         public = config.load().public_url.rstrip("/")
         links = "".join(f"\n{a['title']}: <{public}{a['path']}>" for a in (actions or []) if public)
-        await self.discord_send(ch, f"**{title}**\n{message}{links}")
+        # notifications carry job, watch and approval text that may come from a tainted run: never unfurl links (flags 4)
+        await self._api("POST", f"/channels/{ch}/messages", json={
+            "content": f"**{title}**\n{message}{links}"[:2000], "allowed_mentions": {"parse": []}, "flags": 4})
 
 
 class Telegram(Connector):

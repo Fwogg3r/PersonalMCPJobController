@@ -23,7 +23,7 @@ import logging
 import random
 import time
 
-from . import agent, config, creds, db, executor, memory, registry, router
+from . import agent, config, creds, db, defang, executor, memory, registry, router
 from .auth import Caller
 
 log = logging.getLogger("pmjc.discord_door")
@@ -34,6 +34,7 @@ FATAL_CLOSE = {4004: "invalid bot token", 4010: "invalid shard", 4011: "sharding
                4013: "invalid intents", 4014: "Message Content intent not enabled in the Developer Portal"}
 NEW_WORDS = {"new", "/new", "!new", "reset"}
 MAX_MSG = 2000
+SUPPRESS_EMBEDS = 4  # message flag: Discord doesn't fetch or unfurl links in the message
 DDL = "CREATE TABLE IF NOT EXISTS discord_door (channel_id TEXT PRIMARY KEY, thread_id TEXT, created REAL)"
 PREFS_DDL = "CREATE TABLE IF NOT EXISTS discord_door_prefs (channel_id TEXT PRIMARY KEY, prefs TEXT)"
 BUTTON_PREFIX = "pmjc:"
@@ -96,7 +97,9 @@ def approval_text(a: dict) -> str:
     limit = 1700 if a.get("tool") == "pmjc_shell_run" else 900  # a shell command is always shown whole
     if len(args) > limit:
         args = args[:limit] + "..."
-    reason = f"\n{a['reason']}" if a.get("reason") else ""
+    tainted = bool(a.get("tainted"))  # proposed by a run that read untrusted content: its links are defanged
+    args = defang.text(args, tainted, wrap=False).replace("```", "'" * 3)
+    reason = f"\n{defang.text(a['reason'], tainted)}" if a.get("reason") else ""
     return f"**Approval needed:** `{a['tool']}`{reason}\n```json\n{args}\n```"
 
 
@@ -257,11 +260,12 @@ class Door:
             footer += f" · ${res['cost_usd']:.4f}"
         for f in res.get("fell_back") or []:
             footer += f"\n-# fell back from {f[:150]}"
+        quiet = bool(res.get("untrusted"))  # tainted answer: no link previews (flag SUPPRESS_EMBEDS)
         for part in chunks(res["answer"] + footer):
-            await self.send(reply_ch, part)
-        for a in db.q("SELECT id, tool, args, reason FROM approvals WHERE thread_id=? AND status='pending' AND created>=?",
+            await self.send(reply_ch, part, suppress_embeds=quiet)
+        for a in db.q("SELECT id, tool, args, reason, tainted FROM approvals WHERE thread_id=? AND status='pending' AND created>=?",
                       res["thread_id"], started - 1):
-            await self.send(reply_ch, approval_text(a), components=approval_buttons(a["id"]))
+            await self.send(reply_ch, approval_text(a), components=approval_buttons(a["id"]), suppress_embeds=True)
 
     async def _retitle(self, channel_id: str, thread_id: str, request: str, answer: str, provider: str) -> None:
         """Rename a thread the door started (named after the raw message) to a short topic, like chat apps do.
@@ -406,8 +410,11 @@ class Door:
             except Exception:
                 log.warning("could not forward a DM from %s to owner %s", author.get("id"), owner)
 
-    async def send(self, channel_id: str, content: str, components: list | None = None) -> dict:
+    async def send(self, channel_id: str, content: str, components: list | None = None,
+                   suppress_embeds: bool = False) -> dict:
         body = {"content": content[:MAX_MSG], "allowed_mentions": {"parse": []}}
+        if suppress_embeds:
+            body["flags"] = SUPPRESS_EMBEDS
         if components:
             body["components"] = components
         return await self.api("POST", f"/channels/{channel_id}/messages", body)

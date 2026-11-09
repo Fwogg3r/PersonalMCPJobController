@@ -111,7 +111,7 @@ class Craigslist(Connector):
             row["area"] = site
         return {"query": q.get("q"), "area": site, "total": len(data.get("items") or []), "rows": rows[:limit]}
 
-    @tool(scope="read", untrusted_output=True, egress=True)
+    @tool(scope="read", untrusted_output=True, egress=True, private_output=False)
     async def craigslist_search(self, queries: list[dict]) -> list[dict]:
         """Search Craigslist for several things in ONE call (up to 10 queries; a run can only call this once after it
         reads listings). Each query: q, area (numeric area id, or a name from connectors.craigslist.areas), min_price,

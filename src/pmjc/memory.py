@@ -78,7 +78,7 @@ def trust_of(caller) -> str:
 
 
 def _forbid_tainted(caller, what: str) -> None:
-    if caller is not None and getattr(caller, "untrusted", False):
+    if caller is not None and getattr(caller, "untrusted", False) and not getattr(caller, "approved_write", False):
         raise Untrusted(f"this session has read third-party content, so it can't change {what}; "
                         "ask the user to confirm in a fresh session or the dashboard")
 

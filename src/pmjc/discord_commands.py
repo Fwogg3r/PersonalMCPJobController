@@ -197,7 +197,7 @@ class Commands:
             return f"`{name}` failed: {type(e).__name__}: {str(e)[:500]}"
         if isinstance(res, dict) and res.get("status") == "pending_approval":
             from . import db, discord_door as dd
-            a = db.q("SELECT id, tool, args, reason FROM approvals WHERE id=?", res["approval_id"])
+            a = db.q("SELECT id, tool, args, reason, tainted FROM approvals WHERE id=?", res["approval_id"])
             if a:
                 return dd.approval_text(a[0]), dd.approval_buttons(a[0]["id"])
         text = res if isinstance(res, str) else json.dumps(res, indent=2, default=str)

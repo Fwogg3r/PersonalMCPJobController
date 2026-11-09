@@ -72,7 +72,8 @@ TOOL_NAME = re.compile(r"^[a-zA-Z0-9_]{1,64}$")
 
 
 def tool(fn: Callable | None = None, *, scope: Scope = "act", name: str | None = None,
-         untrusted_output: bool = False, egress: bool = False):
+         untrusted_output: bool = False, egress: bool = False, writes_state: bool = False,
+         private_output: bool = True):
     """Mark a connector method as a tool. Fail-closed defaults:
 
     scope="act" (default) means the call changes something outside pmjc (sends, posts, buys, switches);
@@ -81,12 +82,18 @@ def tool(fn: Callable | None = None, *, scope: Scope = "act", name: str | None =
       such a tool it is tainted: no act tools without approval, no egress tools.
     egress=True: model-controlled arguments leave the machine (search queries, URLs to fetch), so it could leak
       data; tainted runs can't call it.
+    writes_state=True: changes durable state that later runs trust (notes, contacts, jobs, watches). A run that has
+      read untrusted content gets an approval request instead of the call, so injected text can't be laundered into
+      memory. Opt in on every new tool of that kind; mounted MCP tools are `act` and need approval anyway.
+    private_output=False: the result is public-web data (search, fetch, weather), not the user's private data.
+      The default is True (fail-closed): a run that calls such a tool is marked `sensitive` (Caller.sensitive).
     """
     def wrap(f: Callable) -> Callable:
         n = name or f.__name__
         if not TOOL_NAME.match(n):
             raise ValueError(f"tool name {n!r} must match {TOOL_NAME.pattern}")
-        f.__pmjc_tool__ = {"scope": scope, "name": n, "untrusted_output": untrusted_output, "egress": egress}
+        f.__pmjc_tool__ = {"scope": scope, "name": n, "untrusted_output": untrusted_output, "egress": egress,
+                           "writes_state": writes_state, "private_output": private_output}
         return f
     return wrap(fn) if fn else wrap
 
@@ -210,6 +217,7 @@ class Connector:
             "credentials": [f.__dict__ for f in self.credentials],
             "configured": self.configured(), "channel": self.is_channel,
             "tools": [{"name": m["name"], "scope": m["scope"], "egress": m["egress"], "untrusted_output": m["untrusted_output"],
+                       "writes_state": m.get("writes_state", False), "private_output": m.get("private_output", True),
                        "doc": inspect.getdoc(fn) or ""} for m, fn in self.tools()],
             "event_sources": [m for m, _ in self.event_sources()],
         }

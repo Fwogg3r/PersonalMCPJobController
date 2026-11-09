@@ -219,7 +219,7 @@ class Web(Connector):
             row["snippet"] = " ".join(str(row["snippet"] or "").split())[:300]
         return [{k: v for k, v in row.items() if v} for row in rows]
 
-    @tool(scope="read", untrusted_output=True, egress=True)
+    @tool(scope="read", untrusted_output=True, egress=True, private_output=False)
     async def web_search(self, queries: list[str], max_results: int = 8) -> list[dict]:
         """Search the web for several things in ONE call (up to 5 queries; a run can only call this once after it reads
         web content). Returns per query: rows of title, url, snippet, source. Use web_fetch to read a result page.
@@ -313,7 +313,7 @@ class Web(Connector):
             row["links"] = clean_links(ex["links"], final)
         return row
 
-    @tool(scope="read", untrusted_output=True, egress=True)
+    @tool(scope="read", untrusted_output=True, egress=True, private_output=False)
     async def web_fetch(self, urls: list[str], max_chars: int = 8000, links: bool = False) -> list[dict]:
         """Read web pages as plain text, in ONE call (up to 5 URLs; a run can only call this once after it reads web
         content). Plain HTTP, no JavaScript. Returns per URL: final_url, title, text (main content, at most max_chars,

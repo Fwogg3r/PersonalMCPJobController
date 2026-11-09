@@ -27,7 +27,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Any
 
-from . import agent, config, db, executor, memory, registry, router
+from . import agent, config, db, defang, executor, memory, registry, router
 from .auth import Caller
 from .connector import Event
 
@@ -141,6 +141,7 @@ class WatchManager:
         if caller.kind != "admin":  # declared reads are the owner's to set, never a model's
             spec.pop("read_urls", None)
             spec.pop("read_sites", None)
+            spec.pop("read_prefixes", None)
         tid = spec.get("thread_id") or caller.thread_id
         if tid and not memory.thread_exists(tid):
             raise ValueError(f"no thread {tid}; omit thread_id to create one")
@@ -225,7 +226,8 @@ class WatchManager:
     def _caller(self, w: dict) -> Caller:
         sp = w.get("spec") or {}
         return Caller(f"watch:{w['id']}", "job", set(w["scopes"]),
-                      read_urls=tuple(sp.get("read_urls") or ()), read_sites=tuple(sp.get("read_sites") or ()))
+                      read_urls=tuple(sp.get("read_urls") or ()), read_sites=tuple(sp.get("read_sites") or ()),
+                      read_prefixes=tuple(sp.get("read_prefixes") or ()))
 
     async def _check_poll(self, wid: str) -> None:
         w = self.active.get(wid)
@@ -280,8 +282,9 @@ class WatchManager:
         """Returns the answer and whether it was derived from third-party content."""
         sp = w["spec"]
         if sp.get("respond") == "raw":
-            return (f"{sp.get('prompt') or w['request']}\n\nTriggered by {kind}:\n{context[:3000]}",
-                    untrusted or kind in ("event", "poll"))
+            tainted = untrusted or kind in ("event", "poll")
+            return (defang.text(f"{sp.get('prompt') or w['request']}\n\nTriggered by {kind}:\n{context[:3000]}", tainted),
+                    tainted)
         caller = self._caller(w)
         caller.thread_id = sp.get("thread_id")
         caller.untrusted = untrusted or kind in ("event", "poll")
@@ -295,12 +298,14 @@ class WatchManager:
                   f"```\n{context[:12000]}\n```")
         need = router.Need(capabilities={"tools"} if tools else set(), private=bool(sp.get("private")))
         try:
+            caller.sensitive = True  # model.md and the notes in it are the user's private data
             res = await agent.run(prompt, caller, tools, need, system=agent.SYSTEM + memory.system_block(),
                                   max_turns=int(sp.get("max_turns", 6)))
-            return res.text, caller.untrusted
+            executor.audit_run(caller, f"watch:{w['id']}")
+            return defang.for_caller(caller, res.text), caller.untrusted
         except Exception as e:
             log.warning("watch %s: no model could answer (%s); sending raw context", w["id"], type(e).__name__)
-            return f"{w['request']}\n\nWatch fired ({kind}); no model was available to summarize, so here is the raw data:\n{context[:3000]}", True
+            return defang.text(f"{w['request']}\n\nWatch fired ({kind}); no model was available to summarize, so here is the raw data:\n{context[:3000]}", True), True
 
     async def _deliver(self, w: dict, text: str) -> None:
         if w["spec"].get("deliver", "notify") == "none":
