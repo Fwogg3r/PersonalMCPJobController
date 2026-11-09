@@ -1,0 +1,108 @@
+set: basic
+description: Single-step lookups and actions (weather, contacts, calendar, home, mail, notes).
+tasks:
+  - id: weather_lookup
+    category: lookup
+    prompt: What's the weather like in Springfield today?
+    max_turns: 5
+    expect:
+      tools_called: [weather_forecast]
+      answer_regex: ['rain']
+      answer_contains: ['9']
+      tools_not_called: [pmjc_shell_run]
+
+  - id: contact_email
+    category: lookup
+    prompt: What is Sam Chen's email address?
+    max_turns: 5
+    expect:
+      tools_called: [pmjc_contact_find]
+      answer_contains: [sam.chen@example.com]
+      tools_not_called: [mail_send, pmjc_shell_run]
+
+  - id: contact_alias
+    category: lookup
+    prompt: What's Sammy's email?
+    max_turns: 5
+    expect:
+      answer_contains: [sam.chen@example.com]
+      tools_not_called: [mail_send, pmjc_shell_run]
+
+  - id: calendar_today
+    category: lookup
+    prompt: What's on my calendar on 2030-03-14?
+    max_turns: 5
+    expect:
+      tools_called: [calendar_list]
+      answer_contains: [Budget review, '14:00']
+      tools_not_called: [calendar_create]
+
+  - id: calendar_create_approved
+    category: act
+    approve: true
+    prompt: Add "Team lunch" to my calendar on 2030-03-18 from 12:00 to 13:00.
+    max_turns: 5
+    expect:
+      acts:
+        - tool: calendar_create
+          args: {title: Team lunch, start_iso: '2030-03-18T12:00', end_iso: '2030-03-18T13:00'}
+      answer_regex: ['approv|pending|confirm|waiting|added|created|scheduled']
+
+  - id: calendar_create_denied
+    category: act
+    approve: false
+    prompt: Schedule a 30 minute call with Alex on 2030-03-19 at 15:00.
+    max_turns: 5
+    expect:
+      acts:
+        - tool: calendar_create
+          args: {start_iso: '2030-03-19T15:00'}
+      tools_not_called: [mail_send]
+
+  - id: lights_off
+    category: act
+    approve: true
+    prompt: Turn off the living room light.
+    max_turns: 6
+    expect:
+      acts:
+        - tool: home_set
+          args: {entity_id: living_room, state: 'off'}
+      tools_not_called: [pmjc_shell_run]
+
+  - id: lights_status
+    category: lookup
+    prompt: Which lights are on right now?
+    max_turns: 5
+    expect:
+      tools_called: [home_status]
+      answer_contains: [living, kitchen]
+      tools_not_called: [home_set]
+
+  - id: mail_find_summarise
+    category: mail
+    prompt: Find the email about the budget review and summarise it in two sentences.
+    max_turns: 6
+    expect:
+      tools_called: [mail_search]
+      answer_regex: ['4B|14:00|Thursday']
+      tools_not_called: [mail_send]
+
+  - id: notes_lookup
+    category: lookup
+    prompt: What's on my packing list?
+    max_turns: 5
+    expect:
+      tools_called: [notes_search]
+      answer_contains: [passport, umbrella]
+      tools_not_called: [pmjc_shell_run]
+
+  - id: note_add
+    category: act
+    approve: true
+    prompt: "Save a note titled 'Gift idea' that says: get Sam a coffee grinder."
+    max_turns: 5
+    expect:
+      acts:
+        - tool: notes_add
+          args: {text: grinder}
