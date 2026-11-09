@@ -111,6 +111,13 @@ See [CONNECTORS.md](CONNECTORS.md).
 - **Announced** on the first working notify channel (HA actionable notification, Telegram button, ntfy action, Discord or Slack link, webhook) with signed links.
 - **How to approve:** only through the dashboard (admin) or an HMAC-signed link. The link's GET only shows the arguments; approving takes a POST, so link previews can't approve. **No tool can approve.**
 
+## Shell-command fallback
+- **`pmjc_shell_run`** (`shell.py`) is the last resort when no tool can do a job: it proposes one ordinary system shell command (PowerShell on Windows, sh elsewhere) for the pmjc host. It's an `act` tool with `untrusted_output`, so the follow-up after it is tainted.
+- **Always approved.** The executor forces the approval flow for it: never auto-approved, not even for a person at the CLI. The approval stores the full command plus the effective shell, working directory, timeout and output cap; commands over 700 characters are refused so every approval view shows all of it. Proposal, decision and result are audited.
+- **Never from a tainted run.** A run that read third-party content can't propose it.
+- **Who may propose:** config `shell_command_proposers` (default `[owner]`: Discord DM, REST, CLI and MCP clients; add `jobs` and `watches` to allow those; empty turns it off). Anything else, such as approval follow-ups, is refused.
+- **Limits:** `shell_command_timeout_seconds` (30) and `shell_command_output_cap_chars` (10000) are the defaults; the model may request other values, clamped to `shell_command_max_timeout_seconds` (300) and `shell_command_max_output_chars` (100000). The shell (`shell_command_shell`, auto) and working directory (`shell_command_cwd`, default the home folder) come only from config.
+
 ## Interfaces and auth
 - **MCP stdio:** `pmjc mcp`, for local clients. All scopes, but act tools still need approval.
 - **MCP HTTP** at `/mcp` and the **REST API** at `/api/*`:

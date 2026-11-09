@@ -69,7 +69,9 @@ CATALOG: list[dict] = [
      "workaround": "pmjc_handoff with the link, so the user opens it themselves."},
     {"task": "run a command or script", "pmjc": "ssh_run, the user's command tools (kind: command YAML)", "needs": ["ssh"],
      "limits": "Needs approval; only configured machines and commands.", "native": "Your client's shell if it has one.",
-     "workaround": "-"},
+     "workaround": "Last resort when no tool fits (e.g. editing a file): pmjc_shell_run proposes one short shell command "
+                   "for the pmjc host. It always needs the owner's approval, is refused after reading third-party "
+                   "content and for callers config doesn't allow, and its output is untrusted."},
     {"task": "use a local model", "pmjc": "lmstudio_status, lmstudio_ask (already-loaded models only)", "needs": ["lmstudio"],
      "limits": "Loading models needs approval.", "native": "-", "workaround": "-"},
     {"task": "GitHub", "pmjc": "github_notifications, github_search_issues, github_comment", "needs": ["github"],

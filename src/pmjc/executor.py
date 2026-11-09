@@ -13,7 +13,7 @@ import secrets
 import time
 from typing import Any
 
-from . import auth, config, db, memory, registry
+from . import auth, config, db, memory, registry, shell
 from .auth import Caller
 
 log = logging.getLogger("pmjc.executor")
@@ -66,6 +66,16 @@ async def _call_tool(caller: Caller, name: str, args: dict | None, reason: str) 
     t = registry.get().tool(name)
     if t is None:
         raise Denied(f"unknown tool {name}")
+    if name == shell.TOOL:  # approved shell-command fallback: gate and fix the effective limits before hashing
+        why = shell.check_proposal(caller)
+        if why:
+            db.audit(caller.name, name, payload_hash(name, args), "denied", why)
+            raise Denied(why)
+        try:
+            args = shell.normalize(args)
+        except shell.ShellDenied as e:
+            db.audit(caller.name, name, payload_hash(name, args), "denied", str(e))
+            raise Denied(str(e)) from e
     h = payload_hash(name, args)
     if caller.allowed_tools is not None and name not in caller.allowed_tools:
         db.audit(caller.name, name, h, "denied", "not in this run's tool list")
@@ -81,8 +91,8 @@ async def _call_tool(caller: Caller, name: str, args: dict | None, reason: str) 
     if t.scope == "act":
         if memory.act_done(caller.thread_id, name, h):  # same act, same payload, same thread: the user decides again
             return await request_approval(caller, name, args, "already done in this thread; approve only if it should repeat")
-        auto = name in caller.auto_approve or name in config.load().auto_approve
-        if caller.untrusted or (caller.needs_approval and not auto):
+        auto = (name in caller.auto_approve or name in config.load().auto_approve) and name != shell.TOOL
+        if caller.untrusted or name == shell.TOOL or (caller.needs_approval and not auto):  # shell: always approved
             why = reason or ("proposed by a run that read untrusted content" if caller.untrusted else "")
             return await request_approval(caller, name, args, why)
     try:
@@ -109,6 +119,8 @@ async def request_approval(caller: Caller, name: str, args: dict, reason: str = 
          caller.name, reason[:500], "pending", now, now + ttl, caller.thread_id)
     _thread_log(caller.thread_id, f"approval requested for {name} (id {aid})")
     db.audit(caller.name, name, payload_hash(name, args), "approval_requested", aid)
+    if name == shell.TOOL:  # the command itself is audited (it is the owner's to review later)
+        db.audit(caller.name, name, payload_hash(name, args), "shell_proposed", f"{aid}: {args.get('command', '')}")
     asyncio.create_task(_announce(aid, name, args, caller.name, reason))
     return {"status": "pending_approval", "approval_id": aid, "expires_in_seconds": ttl,
             "note": "A person must approve this in the pmjc dashboard or a notification. "
@@ -123,8 +135,9 @@ def _thread_log(tid: str | None, text: str) -> None:
 
 async def _announce(aid: str, name: str, args: dict, by: str, reason: str) -> None:
     preview = json.dumps(args, default=str)
-    if len(preview) > 600:
-        preview = preview[:600] + "..."
+    limit = 1700 if name == shell.TOOL else 600  # a shell command is always shown whole
+    if len(preview) > limit:
+        preview = preview[:limit] + "..."
     msg = f"{by} wants to run {name}\n{reason}\n{preview}"
     approve = f"/approve/{aid}?sig={auth.sign('approve:' + aid)}"
     deny = f"/approve/{aid}?deny=1&sig={auth.sign('deny:' + aid)}"
@@ -170,6 +183,9 @@ async def decide(aid: str, approve: bool, decided_by: str) -> dict:
         out = json.dumps(res, default=str)[:20000]
         db.x("UPDATE approvals SET status='done', result=? WHERE id=?", out, aid)
         db.audit(decided_by, a["tool"], a["payload_hash"], "approved_ok", aid)
+        if a["tool"] == shell.TOOL and isinstance(res, dict):
+            db.audit(decided_by, a["tool"], a["payload_hash"], "shell_result",
+                     f"{aid}: exit {res.get('exit_code')} timed_out={res.get('timed_out')} truncated={res.get('truncated')}")
         _thread_log(a.get("thread_id"), f"{a['tool']} was approved by the user and ran (approval {aid})")
         memory.act_record(a.get("thread_id"), a["tool"], a["payload_hash"], aid)
         _route(res, a.get("thread_id"))

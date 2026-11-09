@@ -93,8 +93,9 @@ def approval_buttons(aid: str) -> list[dict]:
 
 def approval_text(a: dict) -> str:
     args = a.get("args") or "{}"
-    if len(args) > 900:
-        args = args[:900] + "..."
+    limit = 1700 if a.get("tool") == "pmjc_shell_run" else 900  # a shell command is always shown whole
+    if len(args) > limit:
+        args = args[:limit] + "..."
     reason = f"\n{a['reason']}" if a.get("reason") else ""
     return f"**Approval needed:** `{a['tool']}`{reason}\n```json\n{args}\n```"
 

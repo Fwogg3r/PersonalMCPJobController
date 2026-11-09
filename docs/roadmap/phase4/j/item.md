@@ -1,6 +1,6 @@
 ---
 title: Problem-solving instructions and fallbacks (use the tools you have, then commands/files with approval)
-status: active
+status: done
 links: []
 ---
 Live finding: the owner gave a Discord user id and asked to add it to a contact card; the run said it couldn't. Root cause found: pmjc_contact_set has scope 'jobs' but ask() only offers read tools, act tools and the WATCH_TOOLS list, and WATCH_TOOLS has pmjc_contact_find but not pmjc_contact_set, so the model never had the tool (not a model-intelligence limit). Fix that first (add pmjc_contact_set/pmjc_memory_set style writers to ask's tool set, review the list). Then: general system-prompt guidance for problem solving (check pmjc_capabilities, try the closest tool, explain what failed), and a last-resort path that proposes a terminal command or file edit (e.g. editing the contact file) which always needs approval, never runs from a tainted run, and is logged. Decided (owner, 2026-11-07): the runner is ordinary system shell commands (cmd/PowerShell batch commands on Windows, sh elsewhere) on the pmjc host, each one shown in full and run only after the owner approves it.
@@ -10,3 +10,6 @@ Progress (2026-11-08): quick fix done. ask() now offers pmjc_contact_set, pmjc_m
 Progress (2026-11-08, later): problem-solving guidance added as ASK_SYSTEM rule 7 (check pmjc_capabilities, try the closest tool such as pmjc_contact_set/pmjc_memory_set, otherwise name the missing tool, what was tried and the closest workaround); test test_ask_system_has_problem_solving_rule. Still to do: the approved shell-command fallback.
 
 Decided (owner, 2026-11-08) for the shell fallback: who may propose is a config option (public default: untainted runs the owner started; jobs and watches opt in); timeout and output cap are configurable and the model may request other values per command, shown in the approval. See DECISIONS.md. Not built yet.
+
+
+Progress (2026-11-09): approved shell-command fallback built. New act tool pmjc_shell_run (untrusted_output, so the follow-up is tainted) in shell.py; the executor gates it before approval (refused from tainted runs, only callers allowed by config shell_command_proposers, default owner chats; jobs/watches opt in; empty = off), normalizes the stored arguments to include shell, working directory, timeout and output cap, and always forces the approval flow (never auto-approved, not even for admin callers). Timeout and output cap default from config (30 s, 10000 chars); the model may request other values, clamped to shell_command_max_timeout_seconds and shell_command_max_output_chars (300 s, 100000 chars), re-clamped when run. Shell and working directory come only from config. Commands over 700 characters are refused so approvals show them whole. Proposal, command, decision and result are audited. ASK_SYSTEM rule 8, capabilities catalog, CAPABILITIES.md and ARCHITECTURE.md updated; tests in tests/test_shell.py.

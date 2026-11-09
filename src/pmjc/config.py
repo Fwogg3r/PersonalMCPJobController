@@ -111,6 +111,16 @@ class Settings(BaseModel):
     enabled_plugins: list[str] = Field(default_factory=list)  # entry-point connector names allowed to load
     auto_approve: list[str] = Field(default_factory=list)  # act tools that run without approval (any caller)
     approval_outcome_notify: bool = True  # notify channels get the follow-up after an approval decided outside Discord
+    # Approved shell-command fallback (tool pmjc_shell_run; always needs approval, never from a tainted run).
+    # Who may propose: "owner" (chats the owner started: Discord door, REST, CLI, MCP clients), "jobs", "watches".
+    # An empty list turns the tool off.
+    shell_command_proposers: list[str] = Field(default_factory=lambda: ["owner"])
+    shell_command_shell: str = "auto"  # auto (PowerShell on Windows, sh elsewhere) | powershell | cmd | sh
+    shell_command_cwd: str = ""  # working directory; empty = the user's home folder
+    shell_command_timeout_seconds: int = 30  # default per command; the model may ask for more, up to the maximum
+    shell_command_max_timeout_seconds: int = 300
+    shell_command_output_cap_chars: int = 10000  # default cap on returned output
+    shell_command_max_output_chars: int = 100000
     allowed_hosts: list[str] = Field(default_factory=list)  # extra Host headers accepted (e.g. your tunnel hostname)
     # Background activity. Everything is off by default: pmjc only reads data when an agent or you ask.
     monitoring_enabled: bool = False  # run event sources (e.g. polling Windows notifications) in the background

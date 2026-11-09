@@ -114,7 +114,7 @@ Pick the **most native route**: your client's own abilities first (if it can act
 - **Needs:** ssh
 - **Limits:** Needs approval; only configured machines and commands.
 - **Better if your client can:** Your client's shell if it has one.
-- **Workaround:** -
+- **Workaround:** Last resort when no tool fits (e.g. editing a file): pmjc_shell_run proposes one short shell command for the pmjc host. It always needs the owner's approval, is refused after reading third-party content and for callers config doesn't allow, and its output is untrusted.
 
 ## Use a local model
 
