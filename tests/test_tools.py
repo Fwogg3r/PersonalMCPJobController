@@ -176,3 +176,17 @@ def test_ssh_run_on_self_still_needs_approval(home, monkeypatch):
     c = Caller("remote:laptop", "remote", {"sources", "actions"})
     r = asyncio.run(executor.call_tool(c, "ssh_run", {"machine": "local", "command": "echo hi"}))
     assert r["status"] == "pending_approval"
+
+
+def test_pmjc_tokens_satisfy_oauth_transport_scopes(home):
+    """With Google OAuth on, /mcp requires openid+email on every token; pmjc's own tokens must pass that check
+    (they used to get 403) while keeping their pmjc scopes."""
+    import asyncio
+    from pmjc import auth, mcp_server
+    tok = auth.create_token("phone", ["sources", "actions"])
+    v = mcp_server.PmjcVerifier()
+    assert set(asyncio.run(v.verify_token(tok)).scopes) == {"sources", "actions"}
+    v.transport_scopes = ("openid", "email")
+    got = asyncio.run(v.verify_token(tok))
+    assert {"openid", "email", "sources", "actions"} <= set(got.scopes) and "admin" not in got.scopes
+    assert asyncio.run(v.verify_token("pmjc_wrong")) is None

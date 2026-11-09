@@ -61,10 +61,11 @@ class Wn(Connector):
 def home(tmp_path, monkeypatch):
     monkeypatch.setenv("PMJC_HOME", str(tmp_path))
     monkeypatch.setenv("PMJC_MASTER_KEY", "test-master-key")
-    from pmjc import config, creds, db, memory, registry
+    from pmjc import config, creds, db, jobs, memory, registry
     db._local.c = None
     creds._store = None
     registry._reg = None
+    jobs.engine = None  # an engine from an earlier test (e.g. a TestClient app) points at another home's database
     memory.reset()
     s = config.load()
     s.credential_backend = "file"

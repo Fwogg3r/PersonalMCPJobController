@@ -204,11 +204,17 @@ def _wrap(t: registry.ToolSpec, stdio: bool) -> Tool:
 
 
 class PmjcVerifier(TokenVerifier):
+    # With OAuth on, FastMCP's transport check requires the OAuth provider's scopes (Google: openid, email) on EVERY
+    # token, so pmjc's own bearer tokens got 403 on /mcp. A token pmjc verified itself satisfies those sign-in scopes;
+    # pmjc's own scopes (sources, actions, jobs, admin) are still checked per tool.
+    transport_scopes: tuple[str, ...] = ()
+
     async def verify_token(self, token: str) -> AccessToken | None:
         c = auth.verify(token)
         if c is None:
             return None
-        return AccessToken(token=token, client_id=c.name, scopes=sorted(c.scopes), expires_at=None)
+        return AccessToken(token=token, client_id=c.name, scopes=sorted(set(c.scopes) | set(self.transport_scopes)),
+                           expires_at=None)
 
 
 def build_auth(base_url: str | None = None):
@@ -233,6 +239,8 @@ def build_auth(base_url: str | None = None):
         extra["required_scopes"] = ["openid", "email"]
     server = P(client_id=cid, client_secret=secret, base_url=s.oauth.base_url,
                jwt_signing_key=auth.signing_key().hex(), require_authorization_consent=True, **extra)
+    # the provider normalises names (Google: "email" -> ".../auth/userinfo.email"), so take its final list
+    verifier.transport_scopes = tuple(getattr(server, "required_scopes", None) or extra.get("required_scopes", ()))
     return MultiAuth(server=server, verifiers=[verifier])
 
 

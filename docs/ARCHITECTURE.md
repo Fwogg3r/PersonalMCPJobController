@@ -113,6 +113,7 @@ See [CONNECTORS.md](CONNECTORS.md).
 - **Limits and persistence:** watches expire (default 24 h, max 7 days) and need the `jobs` scope. They're stored in SQLite: the service adopts watches created by other processes (stdio MCP, CLI) every 5 s, and restores them after a restart.
 
 - **OpenAI-compatible front door** (`openai_door.py`, [FRONT_DOOR.md](FRONT_DOOR.md)): `/v1/models` and `/v1/chat/completions` run `ask()` for any OpenAI-style chat client, with conversation-to-thread mapping, SSE streaming and pending approvals appended to the answer.
+- **Chat commands on /v1** (`chat_commands.py`): `/help /tools /connectors /approvals /status /model /threads /new` in the last user message are answered by pmjc with no model run, filtered by the token's scopes, and stored as `command` thread items that `ask.history()` skips. `/model` writes the thread's sticky route and never widens (private stays local).
 
 ## Approvals
 - **When.** An `act` tool called through **any** agent interface (stdio MCP included) creates a pending approval, unless it's on the owner's `auto_approve` list and the run is clean. Only a person at the CLI or dashboard runs act tools directly.
