@@ -65,7 +65,7 @@ def _norm(s: str) -> str:
     """Assistant text as the client will echo it back: progress lines and the routing footer dropped, whitespace
     collapsed, first 500 chars."""
     s = routing.strip_footer(s)
-    lines = [ln for ln in s.splitlines() if not re.fullmatch(r"\s*_(calling .*\.\.\.|starting the local model.*)_\s*", ln)]
+    lines = [ln for ln in s.splitlines() if not re.fullmatch(r"\s*_(calling .*\.\.\.|starting the local model.*|[^_]*… \d+s)_\s*", ln)]
     return " ".join(" ".join(lines).split())[:500]
 
 

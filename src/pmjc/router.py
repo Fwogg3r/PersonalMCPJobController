@@ -66,6 +66,9 @@ def _run(cmd: str | list[str], timeout: int) -> bool:
     try:
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         r = subprocess.run(argv, timeout=timeout, capture_output=True, creationflags=flags)
+        if r.returncode != 0:
+            err = (r.stderr or r.stdout or b"").decode("utf-8", "replace").strip()[-300:]
+            log.warning("command %s exited %s: %s", argv[0], r.returncode, err)
         return r.returncode == 0
     except Exception as e:
         log.warning("command %s failed: %s", argv[0], e)
@@ -199,6 +202,7 @@ async def healthy(p: ProviderConfig, start: bool = True) -> bool:
     models = await _models(p)
     if models is None and start and p.start:
         log.info("starting %s", p.id)
+        _phase[p.id] = "starting the model server"
         await asyncio.to_thread(_run, p.start, p.start_timeout)
         deadline = time.time() + p.start_timeout
         while models is None and time.time() < deadline:
@@ -206,6 +210,12 @@ async def healthy(p: ProviderConfig, start: bool = True) -> bool:
             models = await _models(p)
     if models is None:
         return False
+    if start and p.trust == "local" and p.model and p.model in models:
+        # LM Studio's /v1/models lists every downloaded model, loaded or not; check what is really in memory so a
+        # running server with nothing loaded gets the model loaded (not reported ready and then found unusable).
+        loaded = await _loaded(p)
+        if loaded is not None and p.model not in loaded:
+            models = loaded
     if not start and p.trust == "local":
         # Auto-start off: don't let the host load a model on demand (LM Studio JIT); use only what is loaded.
         loaded = await _loaded(p)
@@ -221,7 +231,12 @@ async def healthy(p: ProviderConfig, start: bool = True) -> bool:
         if not (start and p.load_model and load):
             return False
         log.info("loading %s on %s", p.model, p.id)
+        _phase[p.id] = f"loading {p.model}"
         await asyncio.to_thread(_run, load, max(p.start_timeout, 300))
+        if p.trust == "local":
+            loaded = await _loaded(p)
+            if loaded is not None:
+                return p.model in loaded
         models = await _models(p) or []
         return p.model in models
     if not p.model:
@@ -232,6 +247,11 @@ async def healthy(p: ProviderConfig, start: bool = True) -> bool:
 
 
 _starting: dict[str, asyncio.Task] = {}
+_phase: dict[str, str] = {}  # provider id -> what its background start is doing now (for progress notices)
+
+
+def start_phase(p: ProviderConfig) -> str:
+    return _phase.get(p.id, "starting")
 
 
 def kick_start(p: ProviderConfig) -> bool:
@@ -243,17 +263,23 @@ def kick_start(p: ProviderConfig) -> bool:
         return False
 
     async def go():
+        _phase[p.id] = "checking the model server"
         try:
-            await healthy(p, start=True)
+            ok = await healthy(p, start=True)
+            if not ok:
+                log.warning("background start of %s finished but it is not ready", p.id)
         except Exception:
             log.warning("background start of %s failed", p.id, exc_info=True)
+        finally:
+            _phase.pop(p.id, None)
     _starting[p.id] = asyncio.get_running_loop().create_task(go())
     return True
 
 
-async def wait_ready(p: ProviderConfig, seconds: float) -> bool:
-    """Start the local host/model (one shared start task per provider; concurrent callers all wait on it) and wait up
-    to `seconds` for it to be ready. False if auto_start_local is off, the start failed, or time ran out."""
+async def wait_ready(p: ProviderConfig, seconds: float, on_progress=None, every: float = 15.0) -> bool:
+    """Start the local host/model (one shared start task per provider; concurrent callers all wait on it) and wait
+    until that start finishes, at most `seconds`. Every `every` seconds `on_progress(phase, elapsed_s)` is awaited.
+    False if auto_start_local is off, the start failed, or time ran out."""
     if seconds <= 0 or not config.load().auto_start_local:
         return False
     t = _starting.get(p.id)
@@ -262,11 +288,18 @@ async def wait_ready(p: ProviderConfig, seconds: float) -> bool:
         t = _starting.get(p.id)
     if t is None:
         return False
-    try:
-        await asyncio.wait_for(asyncio.shield(t), seconds)
-    except asyncio.TimeoutError:
-        return False
-    except Exception:
+    t0 = time.monotonic()
+    while not t.done():
+        left = seconds - (time.monotonic() - t0)
+        if left <= 0:
+            return False
+        await asyncio.wait({t}, timeout=min(left, every) if every > 0 else left)
+        if not t.done() and on_progress and time.monotonic() - t0 < seconds:
+            try:
+                await on_progress(start_phase(p), time.monotonic() - t0)
+            except Exception:
+                log.debug("progress notice failed", exc_info=True)
+    if t.cancelled() or t.exception() is not None:
         return False
     return await healthy(p, start=False)
 
@@ -300,12 +333,16 @@ async def candidates(need: Need) -> list[ProviderConfig]:
     if need.order:
         by_id = {p.id: p for p in routing}
         routing = [by_id[i] for i in need.order if i in by_id]
+    local_tier = None
+    if need.private:
+        from . import routing as routing_mod  # (routing imports router)
+        local_tier = set(routing_mod.tiers().get("local") or [])
     out = []
     for p in routing:
         if not p.enabled:
             continue
-        if need.private and p.trust != "local":
-            continue
+        if need.private and (p.trust != "local" or p.id not in local_tier):
+            continue  # private work runs only on the `local` tier (by default every local provider)
         if not need.capabilities.issubset(set(p.capabilities)):
             continue
         if need.min_context and p.context_tokens < need.min_context:

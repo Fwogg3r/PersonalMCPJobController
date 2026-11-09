@@ -198,10 +198,13 @@ class RouterConfig(BaseModel):
     # Sticky provider after a fallback: stay on the fallback provider when the thread is "hard" (plan tier strong, this
     # many tool calls in the last run, a condense happened, or history over this share of the planned provider's context).
     # Interactive requests (Discord, /v1, REST, CLI) whose remaining candidates are all local (private thread, /local,
-    # a local-only tier or model id): when the host or model is down and auto_start_local is on, start it and wait up
-    # to this many seconds (a server start plus a 27B model load can take a minute or two) before failing. Never
-    # starts anything while the GPU-busy guard says busy, unless the owner chose "use local anyway".
-    local_start_wait_seconds: float = 180.0
+    # a local-only tier or model id): when the host or model is down and auto_start_local is on, start it and wait
+    # until the start finishes (it has its own limits: the provider's start_timeout, then at least 300 s for the model
+    # load), at most this many seconds. Never starts anything while the GPU-busy guard says busy, unless the owner
+    # chose "use local anyway".
+    local_start_wait_seconds: float = 600.0
+    # While waiting for a local start, send a progress line ("loading <model>… 45s") this often (0 = only the first).
+    local_start_notice_seconds: float = 15.0
     # When the plan's FIRST choice is local and down but later candidates are cloud: wait up to this long for the
     # local start before falling back (0 = fall back at once, the local start continues in the background). The
     # fallback is still recorded as a fallback, so the next turn can switch back.

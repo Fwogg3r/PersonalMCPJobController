@@ -96,7 +96,71 @@ async def test_timeout_fails_with_the_message(env):
     _set(local_start_wait_seconds=0.2)
     with pytest.raises(agent.NoProvider) as e:
         await _run(["loc"], private=True)
-    assert "didn't start in 0.2 s" in str(e.value) and "try again" in str(e.value)
+    assert "didn't start in 0 s" in str(e.value) and "try again" in str(e.value)
+
+
+async def test_progress_notices_while_waiting(env):
+    env["delay"] = 0.35
+    _set(local_start_notice_seconds=0.1)
+    notices = []
+    r = await _run(["loc"], private=True, c=_caller(notices))
+    assert r.provider == "loc"
+    assert "starting the local model" in notices[0]
+    assert len(notices) >= 3 and all(n.startswith("_") and n.rstrip("_").endswith("s") for n in notices[1:])
+
+
+async def test_start_that_ends_unready_says_so_at_once(env, monkeypatch):
+    from pmjc import agent, router
+
+    async def healthy(p, start=True):
+        return p.trust != "local"  # the start runs and returns, but the model never becomes ready
+    monkeypatch.setattr(router, "healthy", healthy)
+    with pytest.raises(agent.NoProvider) as e:
+        await asyncio.wait_for(_run(["loc"], private=True), 0.5)
+    assert "ended after" in str(e.value)
+
+
+async def test_private_work_uses_only_the_local_tier(env):
+    from pmjc import config, router
+    s = config.load()
+    s.routing.append(config.ProviderConfig(id="loc2", kind="openai_compat", base_url="http://127.0.0.1:8/v1",
+                                           trust="local", model="m"))
+    config.save(s)
+    ids = [p.id for p in await router.candidates(router.Need(private=True, capabilities=set()))]
+    assert ids == ["loc", "loc2"]  # default local tier: every local provider
+    s.router.tiers = {"local": ["loc2"]}
+    config.save(s)
+    ids = [p.id for p in await router.candidates(router.Need(private=True, capabilities=set()))]
+    assert ids == ["loc2"]
+    ids = [p.id for p in await router.candidates(router.Need(capabilities=set()))]
+    assert "loc" in ids  # non-private work still sees it
+
+
+async def test_running_server_with_nothing_loaded_gets_the_model_loaded(home, monkeypatch):
+    from pmjc import config, router
+    s = config.load()
+    s.auto_start_local = True
+    config.save(s)
+    p = config.ProviderConfig(id="loc", kind="openai_compat", base_url="http://127.0.0.1:9/v1", trust="local",
+                              model="m", extra={"load": "lms load m"})
+    state = {"loaded": [], "runs": []}
+
+    async def models(_):
+        return ["m", "other"]  # LM Studio lists every downloaded model
+
+    async def loaded(_):
+        return list(state["loaded"])
+
+    def run(cmd, timeout):
+        state["runs"].append(cmd)
+        state["loaded"].append("m")
+        return True
+    monkeypatch.setattr(router, "_models", models)
+    monkeypatch.setattr(router, "_loaded", loaded)
+    monkeypatch.setattr(router, "_run", run)
+    assert await router.healthy(p, start=False) is False
+    assert await router.healthy(p, start=True) is True
+    assert state["runs"] == ["lms load m"]
 
 
 async def test_prefer_wait_zero_falls_back_at_once(env):

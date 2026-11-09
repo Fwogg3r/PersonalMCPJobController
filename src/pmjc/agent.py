@@ -169,13 +169,19 @@ async def _wait_local(p: ProviderConfig, rest: list[ProviderConfig], first: bool
             await notify(LOCAL_START_NOTICE)
         except Exception:
             log.debug("notice failed", exc_info=True)
+    progress = None
+    if notify:
+        async def progress(phase, elapsed):
+            await notify(f"_{phase}… {elapsed:.0f}s_")
     t0 = time.monotonic()
-    ok = await router.wait_ready(p, left)
-    waited[0] += time.monotonic() - t0
+    ok = await router.wait_ready(p, left, progress, r.local_start_notice_seconds)
+    took = time.monotonic() - t0
+    waited[0] += took
     if not ok and only_local:
         pf = routing.prefix_for("strong")
-        tried.append(f"{p.id}: unavailable (the local model didn't start in {secs:g} s; try again"
-                     + (f" or use {pf}" if pf else "") + ")")
+        why = (f"the local model didn't start in {took:.0f} s" if took >= left - 0.05 else
+               f"the local model start ended after {took:.0f} s without the model ready; see the pmjc log")
+        tried.append(f"{p.id}: unavailable ({why}; try again" + (f" or use {pf}" if pf else "") + ")")
     return ok
 
 
