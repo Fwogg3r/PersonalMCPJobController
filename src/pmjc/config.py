@@ -155,6 +155,9 @@ class Settings(BaseModel):
     shell_command_max_timeout_seconds: int = 300
     shell_command_output_cap_chars: int = 10000  # default cap on returned output
     shell_command_max_output_chars: int = 100000
+    # Domains (and subdomains) whose links stay clickable in answers and approval previews of runs that read untrusted
+    # content; links to any other host are defanged (see pmjc.defang). Links a run's own tools returned are kept too.
+    output_link_allowlist: list[str] = Field(default_factory=list)
     allowed_hosts: list[str] = Field(default_factory=list)  # extra Host headers accepted (e.g. your tunnel hostname)
     # Background activity. Everything is off by default: pmjc only reads data when an agent or you ask.
     monitoring_enabled: bool = False  # run event sources (e.g. polling Windows notifications) in the background

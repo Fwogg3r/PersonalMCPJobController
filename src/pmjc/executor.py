@@ -12,9 +12,9 @@ import logging
 import secrets
 import time
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
-from . import auth, config, db, memory, registry, shell
+from . import auth, config, db, defang, memory, registry, shell
 from .auth import Caller
 
 log = logging.getLogger("pmjc.executor")
@@ -31,19 +31,43 @@ def payload_hash(tool: str, args: dict) -> str:
 DECLARED_READ_TOOLS = {"browser_read", "browser_extract", "web_fetch"}  # read tools whose url(s) the owner may fix in advance
 
 
+def _prefix_match(prefix: str, url: str) -> bool:
+    """`url` starts with the declared prefix (same scheme and host, path on a segment boundary). A URL with a query
+    string matches only a prefix that itself contains one (then it's a plain string prefix); `..` segments never match."""
+    try:
+        pp, up = urlsplit(prefix), urlsplit(url)
+    except ValueError:
+        return False
+    if up.scheme not in ("http", "https") or up.scheme != pp.scheme or up.netloc.lower() != pp.netloc.lower():
+        return False
+    if "\\" in url or ".." in up.path.split("/") or "%2e" in up.path.lower():
+        return False
+    if pp.query:
+        return url.startswith(prefix)
+    if "?" in url:
+        return False
+    base = pp.path or "/"
+    return up.path == base or up.path.startswith(base if base.endswith("/") else base + "/")
+
+
 def _url_declared(caller: Caller, url: str) -> bool:
-    if url in caller.read_urls:
+    if url in caller.read_urls:  # exact, query string included
+        return True
+    if any(_prefix_match(p, url) for p in caller.read_prefixes):
         return True
     p = urlparse(url)
     host = (p.hostname or "").lower()
-    return p.scheme in ("http", "https") and any(host == d.lower() or host.endswith("." + d.lower()) for d in caller.read_sites)
+    # read_sites: any path on the site, but never a query string (it would let the model put data in the URL)
+    return (p.scheme in ("http", "https") and "?" not in url
+            and any(host == d.lower() or host.endswith("." + d.lower()) for d in caller.read_sites))
 
 
 def declared_read(caller: Caller, name: str, args: dict) -> bool:
     """True when `name` is a declared-read tool and its url (for web_fetch: every url in `urls`) is one the owner listed
-    (read_urls exact, read_sites by domain) in the stored job/watch definition. The owner fixed the URL, so it isn't
-    model-chosen egress."""
-    if name not in DECLARED_READ_TOOLS or not (caller.read_urls or caller.read_sites):
+    in the stored job/watch definition: `read_urls` match exactly, `read_prefixes` by URL prefix (a path on one host),
+    `read_sites` by domain (subdomains too) but only for URLs without a query string. The owner fixed the URL, so it
+    isn't model-chosen egress."""
+    if name not in DECLARED_READ_TOOLS or not (caller.read_urls or caller.read_sites or caller.read_prefixes):
         return False
     if name == "web_fetch":
         urls = args.get("urls")
@@ -51,6 +75,25 @@ def declared_read(caller: Caller, name: str, args: dict) -> bool:
             urls = [urls]
         return isinstance(urls, list) and bool(urls) and all(isinstance(u, str) and _url_declared(caller, u) for u in urls)
     return _url_declared(caller, str(args.get("url") or ""))
+
+
+def _remember_urls(caller: Caller, args: dict, res: Any) -> None:
+    """URLs a tool returned, and (while the run is still clean) the ones it was asked to fetch, may be shown in the answer."""
+    try:
+        if not caller.untrusted:
+            defang.remember(caller.seen_urls, json.dumps(args, default=str)[:20000])
+        defang.remember(caller.seen_urls, json.dumps(res, default=str)[:200000])
+    except Exception:
+        log.debug("could not record URLs of %s", caller.name, exc_info=True)
+
+
+def run_flags(caller: Caller) -> str:
+    return f"untrusted={int(caller.untrusted)} sensitive={int(caller.sensitive)}"
+
+
+def audit_run(caller: Caller, what: str) -> None:
+    """One audit row at the end of a run with its derived flags (metadata only)."""
+    db.audit(caller.name, what, "", "run_end", run_flags(caller))
 
 
 def _route(res: Any, tid: str | None) -> None:
@@ -114,6 +157,8 @@ async def _call_tool(caller: Caller, name: str, args: dict | None, reason: str) 
         db.audit(caller.name, name, h, "denied", "egress after untrusted content")
         raise Denied(f"{name} sends data off the machine and this run has read untrusted content; "
                      "start a fresh run or ask the user")
+    if t.writes_state and caller.untrusted:  # laundering guard: a run that read third-party content can't write trusted state
+        return await request_approval(caller, name, args, reason or "writes durable state after the run read untrusted content")
     if t.scope == "act":
         if memory.act_done(caller.thread_id, name, h):  # same act, same payload, same thread: the user decides again
             return await request_approval(caller, name, args, "already done in this thread; approve only if it should repeat")
@@ -123,13 +168,16 @@ async def _call_tool(caller: Caller, name: str, args: dict | None, reason: str) 
             return await request_approval(caller, name, args, why)
     try:
         res = await _invoke(t.fn, args, caller)
-        db.audit(caller.name, name, h, "ok")
         if t.scope == "act":
             caller.acted = True
             memory.act_record(caller.thread_id, name, h)
             _route(res, caller.thread_id)
+        if t.private_output:
+            caller.sensitive = True  # derived and fail-closed: only tools declared public-web leave it alone
+        _remember_urls(caller, args, res)  # before the taint below: URLs the model chose while still clean
         if t.untrusted_output:
             caller.untrusted = True  # taint is derived, not declared
+        db.audit(caller.name, name, h, "ok", run_flags(caller))
         return res
     except Exception as e:
         db.audit(caller.name, name, h, "error", type(e).__name__)
@@ -137,17 +185,18 @@ async def _call_tool(caller: Caller, name: str, args: dict | None, reason: str) 
 
 
 async def request_approval(caller: Caller, name: str, args: dict, reason: str = "") -> dict:
+    tainted = int(bool(caller.untrusted))
     aid = secrets.token_urlsafe(9)
     ttl = config.load().approval_ttl_seconds
     now = time.time()
-    db.x("INSERT INTO approvals(id,tool,args,payload_hash,requested_by,reason,status,created,expires,thread_id) "
-         "VALUES(?,?,?,?,?,?,?,?,?,?)", aid, name, json.dumps(args, default=str), payload_hash(name, args),
-         caller.name, reason[:500], "pending", now, now + ttl, caller.thread_id)
+    db.x("INSERT INTO approvals(id,tool,args,payload_hash,requested_by,reason,status,created,expires,thread_id,tainted) "
+         "VALUES(?,?,?,?,?,?,?,?,?,?,?)", aid, name, json.dumps(args, default=str), payload_hash(name, args),
+         caller.name, reason[:500], "pending", now, now + ttl, caller.thread_id, tainted)
     _thread_log(caller.thread_id, f"approval requested for {name} (id {aid})")
     db.audit(caller.name, name, payload_hash(name, args), "approval_requested", aid)
     if name == shell.TOOL:  # the command itself is audited (it is the owner's to review later)
         db.audit(caller.name, name, payload_hash(name, args), "shell_proposed", f"{aid}: {args.get('command', '')}")
-    asyncio.create_task(_announce(aid, name, args, caller.name, reason))
+    asyncio.create_task(_announce(aid, name, args, caller.name, reason, bool(tainted), set(caller.seen_urls)))
     return {"status": "pending_approval", "approval_id": aid, "expires_in_seconds": ttl,
             "note": "A person must approve this in the pmjc dashboard or a notification. "
                     "Check later with pmjc_approval_status."}
@@ -159,8 +208,9 @@ def _thread_log(tid: str | None, text: str) -> None:
         memory.thread_add(tid, "approval", text, author="pmjc", trust="owner")
 
 
-async def _announce(aid: str, name: str, args: dict, by: str, reason: str) -> None:
-    preview = json.dumps(args, default=str)
+async def _announce(aid: str, name: str, args: dict, by: str, reason: str, tainted: bool = False,
+                    seen: set[str] | None = None) -> None:
+    preview = defang.text(json.dumps(args, default=str), tainted, seen, wrap=False)  # a tainted run's links can't unfurl
     limit = 1700 if name == shell.TOOL else 600  # a shell command is always shown whole
     if len(preview) > limit:
         preview = preview[:limit] + "..."
@@ -205,7 +255,7 @@ async def decide(aid: str, approve: bool, decided_by: str) -> dict:
         return {"status": "denied"}
     t = registry.get().tool(a["tool"])
     try:
-        res = await _invoke(t.fn, args)
+        res = await _invoke(t.fn, args, _approved_caller(a, t))
         out = json.dumps(res, default=str)[:20000]
         db.x("UPDATE approvals SET status='done', result=? WHERE id=?", out, aid)
         db.audit(decided_by, a["tool"], a["payload_hash"], "approved_ok", aid)
@@ -221,6 +271,16 @@ async def decide(aid: str, approve: bool, decided_by: str) -> dict:
         db.audit(decided_by, a["tool"], a["payload_hash"], "approved_error", aid)
         _thread_log(a.get("thread_id"), f"{a['tool']} was approved but failed (approval {aid})")
         return {"status": "failed", "error": repr(e)}
+
+
+def _approved_caller(a: dict, t) -> Caller | None:
+    """Who a state write runs as once the owner approved it. A write proposed by a run that had read untrusted content
+    runs as that kind of caller (tainted, limited to read scope), so what it stores is labelled untrusted, a job it
+    creates can't act, and a watch it starts is read-only. Everything else runs as before (no caller)."""
+    if not (a.get("tainted") and getattr(t, "writes_state", False)):
+        return None
+    return Caller(a.get("requested_by") or "approval", "remote", {"sources", "jobs"}, untrusted=True, approved_write=True,
+                  thread_id=a.get("thread_id"))
 
 
 def approval_status(aid: str) -> dict:

@@ -109,7 +109,7 @@ Set `limitations` (what the connector can't do, prerequisites such as where an i
 
 ## Web search and page fetch (the `web` connector)
 
-`web_search` (up to 5 queries per call) and `web_fetch` (up to 5 URLs per call, readable text) give runs on local models the reach of a client's own web tools. Both return third-party text and send queries/URLs off the machine, so after one call a run is tainted and can't make another egress call: the model puts everything into one list. `web_fetch` also stays allowed after taint for URLs the owner declared in a job or watch (`read_urls`, `read_sites`; every URL in the call must match).
+`web_search` (up to 5 queries per call) and `web_fetch` (up to 5 URLs per call, readable text) give runs on local models the reach of a client's own web tools. Both return third-party text and send queries/URLs off the machine, so after one call a run is tainted and can't make another egress call: the model puts everything into one list. `web_fetch` also stays allowed after taint for URLs the owner declared in a job or watch (`read_urls`, `read_prefixes`, `read_sites`; every URL in the call must match; read_sites never matches a URL with a query string).
 
 Pick a search backend under `connectors.web` in settings (`web_fetch` works without one):
 

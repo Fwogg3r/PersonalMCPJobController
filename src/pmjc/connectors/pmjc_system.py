@@ -94,7 +94,7 @@ class Pmjc(Connector):
         """Search shared notes by text or tag. Tag "pinned" notes are shown at the start of every session."""
         return memory.note_search(query, tag, limit)
 
-    @tool(scope="jobs")
+    @tool(scope="jobs", writes_state=True)
     async def pmjc_memory_set(self, key: str, value: str, tags: list[str] | None = None, pinned: bool = False,
                               _caller=None) -> dict:
         """Save a durable fact for all future sessions (a preference, an alias, an id). Never secrets. Not allowed
@@ -105,7 +105,7 @@ class Pmjc(Connector):
         except (ValueError, PermissionError) as e:
             return {"error": str(e)}
 
-    @tool(scope="jobs")
+    @tool(scope="jobs", writes_state=True)
     async def pmjc_memory_delete(self, key: str, _caller=None) -> dict:
         """Delete a shared note you or another agent wrote (not the user's notes, not after reading third-party content)."""
         try:
@@ -119,7 +119,7 @@ class Pmjc(Connector):
         email). Use before sending or watching for a reply, so you match what the service displays. Empty query lists all."""
         return memory.contact_find(query)
 
-    @tool(scope="jobs")
+    @tool(scope="jobs", writes_state=True)
     async def pmjc_contact_set(self, name: str, aliases: list[str] | None = None, handles: dict[str, str] | None = None,
                                notes: str = "", _caller=None) -> dict:
         """Add or extend a contact. handles keys: discord_display, discord_user_id, discord_dm_channel_id, phone, email,
@@ -222,7 +222,7 @@ class Pmjc(Connector):
         return executor.approval_status(approval_id)
 
     # --- watches: temporary monitors for one request ---------------------------------------------------------
-    @tool(scope="jobs")
+    @tool(scope="jobs", writes_state=True)
     async def pmjc_watch_start(self, request: str, type: str, then_do: str | None = None,
                                at: str | None = None, after_seconds: int | None = None,
                                source: str | None = None, match_app: list[str] | None = None,
@@ -289,7 +289,7 @@ class Pmjc(Connector):
         return [{"name": j.name, "description": j.description, "enabled": j.enabled, "trigger": j.trigger}
                 for j in load_jobs().values()]
 
-    @tool(scope="jobs")
+    @tool(scope="jobs", writes_state=True)
     async def pmjc_job_create(self, name: str, prompt: str, cron: str | None = None, interval_seconds: int | None = None,
                               event_source: str | None = None, match_contains: list[str] | None = None,
                               match_app: list[str] | None = None, tools: list[str] | None = None,
@@ -324,7 +324,7 @@ class Pmjc(Connector):
         from ..jobs import get_engine
         return await get_engine().run_job(name, "manual")
 
-    @tool(scope="jobs")
+    @tool(scope="jobs", writes_state=True)
     async def pmjc_job_delete(self, name: str) -> dict:
         """Delete a job."""
         from ..jobs import delete_job, get_engine

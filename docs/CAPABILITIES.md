@@ -128,7 +128,7 @@ Pick the **most native route**: your client's own abilities first (if it can act
 
 - **pmjc:** browser_read (text and links), browser_extract (rows by CSS selector), browser_browse (scroll, wait, expand without submitting; read-only), browser_act (type, press keys, click anything; needs approval) in pmjc's own signed-in browser, allowed domains
 - **Needs:** browser
-- **Limits:** browser_read/extract/browse can't type or submit; browser_act can and needs approval (max 10 steps per call). After a run has read one page, further reads are refused unless the owner declared the URL or site (read_urls/read_sites) in the job or watch.
+- **Limits:** browser_read/extract/browse can't type or submit; browser_act can and needs approval (max 10 steps per call). After a run has read one page, further reads are refused unless the owner declared the URL, prefix or site (read_urls/read_prefixes/read_sites; sites never with a query string) in the job or watch.
 - **Better if your client can:** Browser or computer control in your client.
 - **Workaround:** pmjc_handoff with the link, so the user opens it themselves.
 

@@ -28,7 +28,7 @@ class Weather(Connector):
     async def health(self) -> Health:
         return Health(True, "no account needed")
 
-    @tool(scope="read", egress=True)
+    @tool(scope="read", egress=True, private_output=False)
     async def weather_forecast(self, place: str | None = None, lat: float | None = None, lon: float | None = None,
                                days: int = 3, units: str = "fahrenheit") -> dict:
         """Current conditions and a daily forecast for a place name or coordinates (use ha_location for 'near me')."""
@@ -61,7 +61,7 @@ class Places(Connector):
     async def health(self) -> Health:
         return Health(True, "no account needed")
 
-    @tool(scope="read", egress=True)
+    @tool(scope="read", egress=True, private_output=False)
     async def places_nearby(self, lat: float, lon: float, kind: str = "restaurant", radius_m: int = 2000,
                             cuisine: str | None = None, limit: int = 15) -> list[dict]:
         """Places of a kind near coordinates. kind: restaurant, fast_food, cafe, bar, pharmacy, fuel, supermarket, ...
@@ -85,7 +85,7 @@ class Places(Connector):
                         "address": " ".join(filter(None, [t.get("addr:housenumber"), t.get("addr:street"), t.get("addr:city")]))})
         return out[:limit]
 
-    @tool(scope="read", egress=True)
+    @tool(scope="read", egress=True, private_output=False)
     async def places_geocode(self, place: str) -> dict:
         """Coordinates for a place name or address."""
         return await geocode(self.http, place)

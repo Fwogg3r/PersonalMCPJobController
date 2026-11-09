@@ -36,7 +36,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from pydantic import BaseModel, Field
 
-from . import agent, auth, config, db, memory, registry, router
+from . import agent, auth, config, db, defang, executor, memory, registry, router
 from .auth import Caller
 from .connector import Event
 
@@ -67,7 +67,8 @@ class Job(BaseModel):
     expect_json: bool = False
     auto_approve: list[str] = Field(default_factory=list)  # only honoured in files the owner wrote
     read_urls: list[str] = Field(default_factory=list)  # exact URLs browser reads may fetch after taint (owner files only)
-    read_sites: list[str] = Field(default_factory=list)  # domains likewise (owner files only)
+    read_sites: list[str] = Field(default_factory=list)  # domains likewise, URLs without a query string (owner files only)
+    read_prefixes: list[str] = Field(default_factory=list)  # URL prefixes likewise: scheme + host + path start (owner files only)
     cooldown_seconds: int = 0  # minimum time between runs
     file: str = ""
 
@@ -101,7 +102,7 @@ def save_job(job: Job, created_by: Caller | None = None) -> Path:
         raise ValueError("job name: lowercase letters, digits, - and _ only")
     if created_by is not None and created_by.kind != "admin":
         job.scopes = [s for s in job.scopes if s in ("sources", "actions") and created_by.can(s)]
-        job.read_urls, job.read_sites = [], []  # declared reads are the owner's too, never a model's
+        job.read_urls, job.read_sites, job.read_prefixes = [], [], []  # declared reads are the owner's too, never a model's
         job.auto_approve = []  # only the owner (CLI, dashboard, editing the file) can pre-approve actions
     else:
         job.scopes = [s for s in job.scopes if s in ("sources", "actions")]
@@ -295,7 +296,8 @@ class Engine:
         rid = db.x("INSERT INTO runs(job,trigger,status,started,thread_id) VALUES(?,?,?,?,?)", name, trigger, "running", now, thread_id)
         caller = Caller(f"job:{name}", "job", set(job.scopes) & {"sources", "actions"},
                         auto_approve=set(job.auto_approve),
-                        read_urls=tuple(job.read_urls), read_sites=tuple(job.read_sites), allowed_tools=set(job.tools) if job.tools else None)
+                        read_urls=tuple(job.read_urls), read_sites=tuple(job.read_sites),
+                        read_prefixes=tuple(job.read_prefixes), allowed_tools=set(job.tools) if job.tools else None)
         caller.thread_id = thread_id if memory.thread_exists(thread_id) else None
         prompt = job.prompt
         if event is not None:
@@ -312,15 +314,19 @@ class Engine:
         need = router.Need(capabilities=set(job.model.capabilities), private=job.model.private,
                            min_context=job.model.min_context, order=job.model.order)
         try:
+            caller.sensitive = True  # model.md and the notes in it are the user's private data
             res = await agent.run(prompt, caller, tools, need, system=agent.SYSTEM + memory.system_block(),
                                   max_turns=job.max_turns, expect_json=job.expect_json)
+            text = defang.for_caller(caller, res.text)  # a tainted run's links can't unfurl or carry data out
             if caller.thread_id:
-                memory.thread_add(caller.thread_id, "job_result", f"{name}: {res.text}", author=f"job:{name}",
+                memory.thread_add(caller.thread_id, "job_result", f"{name}: {text}", author=f"job:{name}",
                                   trust="untrusted" if caller.untrusted else "agent", status="updated", unread=True)
             db.x("UPDATE runs SET status='ok', provider=?, finished=?, output=?, cost_usd=? WHERE id=?",
-                 res.provider, time.time(), res.text[:20000], res.cost_usd, rid)
-            await self._notify(job, res.text)
-            return {"run": rid, "status": "ok", "provider": res.provider, "output": res.text}
+                 res.provider, time.time(), text[:20000], res.cost_usd, rid)
+            executor.audit_run(caller, f"job:{name}")
+            await self._notify(job, text)
+            return {"run": rid, "status": "ok", "provider": res.provider, "output": text,
+                    "untrusted": caller.untrusted, "sensitive": caller.sensitive}
         except Exception as e:
             from .creds import Redactor
             err = Redactor.scrub(f"{type(e).__name__}: {e}")[:2000]

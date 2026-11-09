@@ -40,6 +40,8 @@ class ToolSpec:
     egress: bool = False
     raw_doc: str = ""  # the docstring alone, without the connector's limits (used by compact schemas)
     schema: dict | None = None  # JSON schema passed through as-is (mounted MCP tools); else derived from the signature
+    writes_state: bool = False  # writes durable trusted state (notes, contacts, jobs, watches): approval after taint
+    private_output: bool = True  # result may hold the user's private data (False: public-web results)
 
     @property
     def mcp_scope(self) -> str:
@@ -132,7 +134,9 @@ class Registry:
                 out.append(ToolSpec(meta["name"], c.id, meta["scope"], fn, with_limits(inspect.getdoc(fn) or "", c),
                                     meta["untrusted_output"], meta.get("egress", False),
                                     raw_doc=inspect.getdoc(fn) or "",
-                                    schema=getattr(fn, "__pmjc_schema__", None)))
+                                    schema=getattr(fn, "__pmjc_schema__", None),
+                                    writes_state=meta.get("writes_state", False),
+                                    private_output=meta.get("private_output", True)))
         return out
 
     def tool(self, name: str) -> ToolSpec | None:

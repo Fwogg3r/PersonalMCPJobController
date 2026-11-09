@@ -223,7 +223,7 @@ class Browser(Connector):
         self._ctx = self._pw = None
         await super().close()
 
-    @tool(scope="read", untrusted_output=True, egress=True)
+    @tool(scope="read", untrusted_output=True, egress=True, private_output=False)
     async def browser_read(self, url: str, wait_seconds: float = 3.0, max_chars: int = 15000, max_links: int = 40) -> dict:
         """Open a page in pmjc's signed-in browser and return its visible text plus `links` (text and absolute href, deduplicated, at most max_links; 0 = none). url must be on a domain the user allowed (the error lists them). Read-only: it can't click or type."""
         self._check(url)
@@ -239,7 +239,7 @@ class Browser(Connector):
             finally:
                 await page.close()
 
-    @tool(scope="read", untrusted_output=True, egress=True)
+    @tool(scope="read", untrusted_output=True, egress=True, private_output=False)
     async def browser_extract(self, url: str, selector: str, fields: dict, max_items: int = 30, wait_seconds: float = 3.0) -> dict:
         """Open a page and return structured rows. `selector` is a CSS selector for each repeated row (e.g. "li.result"); `fields` maps a name to a sub-selector inside the row, optionally with @attribute: {"title": "h3", "price": ".price", "link": "a@href"} (a bare "@href" reads the row's own attribute). Text fields are visible text; href/src values are made absolute. Same domain rules as browser_read."""
         self._check(url)
@@ -286,7 +286,7 @@ class Browser(Connector):
         elif kind == "press":
             await page.keyboard.press(val)
 
-    @tool(scope="read", untrusted_output=True, egress=True)
+    @tool(scope="read", untrusted_output=True, egress=True, private_output=False)
     async def browser_browse(self, url: str, steps: list[dict], max_chars: int = 8000) -> dict:
         """Open a page and run up to 10 SAFE steps, then return the final text, links and URL. Steps (one key each): {"scroll": screens}, {"wait": seconds}, {"wait_for": css_selector}, {"click": css_selector or "text=Visible label"}. Clicks are refused if the target is a submit control, inside a form, or a link to another domain; there is no typing or key pressing (use browser_act, which needs approval). Same domain rules as browser_read."""
         self._check(url)
