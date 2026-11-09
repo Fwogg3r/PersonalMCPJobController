@@ -239,9 +239,23 @@ class Pmjc(Connector):
                  "tools": [m["name"] for m, _ in c.tools()]} for c in registry.get().connectors.values()]
 
     @tool(scope="read")
-    async def pmjc_approval_status(self, approval_id: str) -> dict:
-        """Status of an action waiting for the user's approval (pending, done, denied, expired, failed)."""
+    async def pmjc_approval_status(self, approval_id: str, _caller=None) -> dict:
+        """Status of an action waiting for the user's approval (pending, done, denied, expired, failed). Only the
+        caller that requested it (or an admin) can see it."""
+        if _caller is not None and not executor.may_see(_caller, approval_id):
+            return {"status": "unknown"}
         return executor.approval_status(approval_id)
+
+    @tool(scope="read")
+    async def pmjc_approval_wait(self, approval_id: str, timeout_seconds: int = 50, _caller=None) -> dict:
+        """Wait for the user's decision on an action that returned pending_approval (up to timeout_seconds, max
+        1800) and return the real outcome: done with the result, denied, failed or expired. If it returns pending,
+        call it again; don't ask the user to prompt you. Only the caller that requested the approval (or an admin)
+        may wait on it."""
+        if _caller is not None and not executor.may_see(_caller, approval_id):
+            raise executor.Denied("no such approval for this caller")
+        res = await executor.wait_for_decision(approval_id, max(0, min(int(timeout_seconds), 1800)), deliver=True)
+        return executor.pending_payload(res) if res["status"] == "pending" else res
 
     # --- watches: temporary monitors for one request ---------------------------------------------------------
     @tool(scope="jobs", writes_state=True)

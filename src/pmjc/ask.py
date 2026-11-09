@@ -41,6 +41,8 @@ WATCH_TOOLS = {"pmjc_connectors", "pmjc_watch_start", "pmjc_watch_status", "pmjc
                "pmjc_job_create", "pmjc_jobs_list", "pmjc_context", "pmjc_capabilities", "pmjc_threads_recent",
                "pmjc_thread_get", "pmjc_thread_note", "pmjc_thread_start", "pmjc_memory_get", "pmjc_memory_search",
                "pmjc_contact_find", "pmjc_contact_set", "pmjc_memory_set"}
+NO_RUN_TOOLS = {"pmjc_approval_wait"}  # tools only external MCP clients get
+OUTCOME_GRACE_SECONDS = 5.0  # how long continue_after_approval lets a live waiter deliver the outcome itself
 DDL = "CREATE TABLE IF NOT EXISTS asks (id INTEGER PRIMARY KEY, text TEXT, norm TEXT, ts REAL, answer TEXT, provider TEXT, caller TEXT)"
 
 
@@ -105,8 +107,9 @@ def history(thread_id: str, turns: int, include_untrusted: bool = True) -> tuple
 def ask_tools(caller: Caller) -> list:
     """The tools ask() offers a run for this caller."""
     return [t for t in registry.get().tools()
-            if (t.scope == "read" and caller.can("sources")) or (t.name in WATCH_TOOLS and caller.can("jobs"))
-            or (t.scope == "act" and caller.can("actions"))]
+            if t.name not in NO_RUN_TOOLS  # blocking waits are for external MCP clients; runs have their continuation
+            and ((t.scope == "read" and caller.can("sources")) or (t.name in WATCH_TOOLS and caller.can("jobs"))
+                 or (t.scope == "act" and caller.can("actions")))]
 
 
 async def ask(caller: Caller, text: str, private: bool = False, provider_order: list[str] | None = None,
@@ -186,6 +189,24 @@ async def ask(caller: Caller, text: str, private: bool = False, provider_order: 
             "untrusted": caller.untrusted, "sensitive": caller.sensitive, "routing": info}
 
 
+async def _requester_has_outcome(aid: str) -> bool:
+    """True when the client that requested the approval already has (or is live-waiting for) the outcome, so no
+    pmjc model run or notify follow-up is needed. Gives a live waiter a short grace period to mark delivery;
+    a waiter that vanished without delivering (the client gave up) means the usual follow-up runs."""
+    import asyncio
+    import time
+    from . import executor
+    deadline = time.monotonic() + OUTCOME_GRACE_SECONDS
+    while True:
+        if executor.delivered(aid):
+            return True
+        if not executor.has_live_waiter(aid):
+            return False
+        if time.monotonic() >= deadline:
+            return True
+        await asyncio.sleep(0.05)
+
+
 async def continue_after_approval(aid: str, res: dict) -> str | None:
     """After an approval decided over REST, CLI or the approval link, feed the outcome back into its thread (as the
     Discord door does), store the answer there as unread, and send it to the notify channels if
@@ -207,6 +228,10 @@ async def continue_after_approval(aid: str, res: dict) -> str | None:
     if not isinstance(detail, str):
         detail = json.dumps(detail, default=str)
     tid = rows[0]["thread_id"]
+    if await _requester_has_outcome(aid):  # the requesting MCP client got it inline: only the thread note
+        memory.thread_add(tid, "approval", f"{rows[0]['tool']} outcome ({status}) was delivered to the requesting "
+                          f"client (approval {aid})", author="pmjc", trust="owner")
+        return None
     caller = Caller(f"approval:{aid}", "job", {"sources", "jobs", "actions"})
     try:  # per-tool taint (decided 2026-11-08): only results of tools that can return third-party text taint the run
         caller.untrusted = bool(registry.get().tool(rows[0]["tool"]).untrusted_output) and status == "done"

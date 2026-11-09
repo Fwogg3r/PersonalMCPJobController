@@ -142,7 +142,7 @@ Pick the **most native route**: your client's own abilities first (if it can act
 
 ## Run a command or script
 
-- **pmjc:** ssh_run, the user's command tools (kind: command YAML)
+- **pmjc:** ssh_run (other machines over SSH, and the machine pmjc runs on, locally: see ssh_machines), the user's command tools (kind: command YAML)
 - **Needs:** ssh
 - **Limits:** Needs approval; only configured machines and commands.
 - **Better if your client can:** Your client's shell if it has one.

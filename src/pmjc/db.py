@@ -47,6 +47,10 @@ def conn() -> sqlite3.Connection:
                 c.execute(f"ALTER TABLE {t} ADD COLUMN thread_id TEXT")
         if "tainted" not in {r[1] for r in c.execute("PRAGMA table_info(approvals)")}:
             c.execute("ALTER TABLE approvals ADD COLUMN tainted INTEGER DEFAULT 0")  # the requesting run had read untrusted content
+        have = {r[1] for r in c.execute("PRAGMA table_info(approvals)")}
+        for col, ddl in (("delivered_to_requester", "INTEGER DEFAULT 0"), ("waiter_seen", "REAL DEFAULT 0")):
+            if col not in have:  # outcome delivered straight to the waiting MCP client; waiter heartbeat
+                c.execute(f"ALTER TABLE approvals ADD COLUMN {col} {ddl}")
         _local.c = c
     return c
 
