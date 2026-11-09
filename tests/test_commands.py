@@ -188,3 +188,16 @@ async def test_shell_run_returns_running_and_detached(home):
     assert s["status"] == "done" and s["exit_code"] == 0 and "7" in s["output"]
     quick = await shell.run(f'{amp}"{sys.executable}" -c "print(5)"')
     assert quick["exit_code"] == 0 and quick["output"].strip() == "5"
+
+
+def test_cmd_command_line_keeps_quotes():
+    """cmd.exe gets the command verbatim (Python's list quoting would turn inner quotes into \\" and break it)."""
+    import os
+    from pmjc.commands import popen_args
+    argv = ["C:\Windows\System32\cmd.exe", "/d", "/s", "/c", 'echo "a b" & dir "C:\x y"']
+    out = popen_args(argv)
+    if os.name == "nt":
+        assert out == '"C:\Windows\System32\cmd.exe" /d /s /c "echo "a b" & dir "C:\x y""'
+    else:
+        assert out == argv
+    assert popen_args(["sh", "-c", "echo hi"]) == ["sh", "-c", "echo hi"]

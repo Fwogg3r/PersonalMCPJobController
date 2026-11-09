@@ -255,6 +255,15 @@ def _prune() -> None:
             _runs.pop(r.id, None)
 
 
+def popen_args(argv: list[str]) -> list[str] | str:
+    """`cmd /d /s /c <command>` must reach cmd.exe verbatim: Python's list quoting escapes inner double quotes as \\"
+    which cmd doesn't understand, so commands with quoted paths would break. With /s, cmd strips the outer quotes
+    and runs the rest as typed. Every other argv is passed as a list."""
+    if os.name == "nt" and len(argv) == 5 and [x.lower() for x in argv[1:4]] == ["/d", "/s", "/c"]:
+        return f'"{argv[0]}" /d /s /c "{argv[4]}"'
+    return argv
+
+
 async def execute(*, tool: str, machine: str, argv: list[str], command: str, timeout: float,
                   wait_seconds: float | None, finish: Callable[[Run], dict], cwd: str | None = None, merge: bool = False,
                   head_cap_bytes: int | None = None, stream_keep: dict[str, int] | None = None) -> dict:
@@ -264,7 +273,7 @@ async def execute(*, tool: str, machine: str, argv: list[str], command: str, tim
     run = Run(tool, machine, command, current_owner.get(), timeout, merge, head_cap_bytes, stream_keep or {}, finish)
     run.loop = asyncio.get_running_loop()
     run.done_evt, run.exited_evt, run.readers_evt = asyncio.Event(), asyncio.Event(), asyncio.Event()
-    proc = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+    proc = subprocess.Popen(popen_args(argv), cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT if merge else subprocess.PIPE, creationflags=_flags(), bufsize=0)
     run.proc = proc
     pipes = [("out", proc.stdout)] + ([] if merge else [("err", proc.stderr)])
