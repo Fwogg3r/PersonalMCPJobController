@@ -434,7 +434,7 @@ def context_bundle(caller=None, max_notes: int = 30) -> dict:
         "connected": sorted(connected),
         "not_connected": sorted(set(reg.connectors) - connected),
         "can_do": [{"task": c["task"][:90], "available_now": c.get("available_now", True)}
-                   for c in capabilities.capabilities(None, connected)],
+                   for c in capabilities.capabilities(None, connected | {i.partition(':')[0] for i in connected})],
         "next": ("Resume a thread with pmjc_thread_get if the request continues one. Before acting call "
                  "pmjc_capabilities(task) to pick the most native route."),
     }

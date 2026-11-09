@@ -146,7 +146,7 @@ def auth_list():
 def auth_set(connector: str):
     """Enter a connector's credentials (secrets are typed hidden)."""
     from . import config, creds, registry
-    c = registry.get().connectors.get(connector)
+    c = registry.ensure_instance(connector)  # "google:work" creates the instance on first use
     if not c:
         raise typer.BadParameter(f"unknown connector; try: {', '.join(registry.get().connectors)}")
     if c.description:

@@ -107,6 +107,9 @@ async function settingsTab(){ const [g,aa]=await Promise.all([api("/api/settings
 
 async function connectors(){ const d=await api("/api/connectors");
   $("#main").innerHTML=(Object.keys(d.errors).length?`<div class="card bad">Failed to load: ${esc(JSON.stringify(d.errors))}</div>`:"")+
+  `<div class="card"><div class="row"><b>Add an instance</b><select id="ni-t">${d.connectors.filter(c=>!c.instance).map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("")}</select>
+   <input id="ni-n" placeholder="name, e.g. work" style="width:140px"><button class="b" id="ni-b">Add</button></div>
+   <p class="muted">A second copy of a connector with its own options and secrets (id type:name; tools get a __name suffix).</p></div>`+
   d.connectors.map(c=>`<div class="card"><div class="row"><b>${esc(c.name)}</b><span class="pill ${c.health.ok?"ok":"muted"}">${c.health.ok?"connected":"not connected"}</span>
    <span class="muted grow">${esc(c.health.detail)}</span>${c.docs_url?`<a href="${esc(c.docs_url)}" target="_blank" rel="noopener noreferrer">docs</a>`:""}</div>
    <p class="muted">${esc(c.description)}</p>
@@ -115,6 +118,8 @@ async function connectors(){ const d=await api("/api/connectors");
    <div class="row" style="margin-top:8px">${c.credentials.some(f=>f.kind!=="oauth2")?`<button class="b p" data-save="${esc(c.id)}">Save</button><button class="b d" data-clear="${esc(c.id)}">Clear</button>`:""}
    ${c.oauth?`<button class="b" data-oauth="${esc(c.id)}">Connect account</button>`:""}</div>
    <div class="tools">${c.tools.map(t=>`<span title="${esc(t.doc)}">${esc(t.name)}${t.scope==="act"?" ✎":""}</span>`).join(" · ")}</div></div>`).join("");
+  $("#ni-b").onclick=async()=>{const n=$("#ni-n").value.trim();if(!n)return;
+    await api(`/api/connectors/${$("#ni-t").value}:${encodeURIComponent(n)}/credentials`,{method:"PUT",body:JSON.stringify({values:{}})});render()};
   document.querySelectorAll("[data-save]").forEach(b=>b.onclick=async()=>{const id=b.dataset.save,v={};
     document.querySelectorAll(`input[data-c="${id}"]`).forEach(i=>{if(i.value)v[i.dataset.f]=i.value});
     await api(`/api/connectors/${id}/credentials`,{method:"PUT",body:JSON.stringify({values:v})});render()});

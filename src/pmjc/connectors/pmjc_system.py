@@ -28,7 +28,7 @@ class Pmjc(Connector):
         """What pmjc can and can't do for a task, its limits, a better route your own client may have, and the
         workaround that comes closest to how the user would do it themselves. task: a few words ("send a message",
         "weather"); omit for everything. Use it before telling the user something isn't possible."""
-        connected = {c.id for c in registry.get().connectors.values() if c.configured()}
+        connected = {i for c in registry.get().connectors.values() if c.configured() for i in (c.id, c.type_id)}
         return capabilities.capabilities(task, connected, tainted=bool(_caller and _caller.untrusted))
 
     @tool(scope="read")
@@ -213,7 +213,7 @@ class Pmjc(Connector):
     @tool(scope="read")
     async def pmjc_connectors(self) -> list[dict]:
         """Which services are connected and which tools each one offers."""
-        return [{"id": c.id, "name": c.name, "configured": c.configured(),
+        return [{"id": c.id, "type": c.type_id, "instance": c.instance or None, "name": c.name, "configured": c.configured(),
                  "tools": [m["name"] for m, _ in c.tools()]} for c in registry.get().connectors.values()]
 
     @tool(scope="read")
