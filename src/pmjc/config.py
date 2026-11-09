@@ -1,9 +1,11 @@
 """Paths and user settings. Everything personal lives in PMJC_HOME, never in the repo."""
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any, Literal
 
@@ -256,9 +258,43 @@ class Settings(BaseModel):
 
     router: RouterConfig = Field(default_factory=RouterConfig)
     commands: CommandsConfig = Field(default_factory=CommandsConfig)
+    # Named settings overlays the owner writes in settings.yaml or the dashboard (never from chat), e.g.
+    # `gaming: {router.gpu_busy_action: ask, "routing[local-model].enabled": false}`. Chat may switch to one with
+    # `pmjc_profile_switch`. Keys are dotted settings paths (see pmjc.settings_edit); bad profiles are refused at switch time.
+    profiles: dict[Any, Any] = Field(default_factory=dict)  # name -> {settings path: value}; checked when switched to
 
 
 _lock = threading.Lock()
+_LOCK_STALE_SECONDS = 60.0
+
+
+@contextlib.contextmanager
+def file_lock(timeout: float = 15.0):
+    """Exclusive lock on settings.yaml across threads and processes (a lockfile created with O_EXCL; a lock older
+    than a minute is taken to be left by a crashed process). Every writer of settings.yaml takes it."""
+    lf = path("settings.yaml.lock")
+    deadline = time.monotonic() + timeout
+    with _lock:
+        while True:
+            try:
+                fd = os.open(str(lf), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.close(fd)
+                break
+            except FileExistsError:
+                try:
+                    if time.time() - lf.stat().st_mtime > _LOCK_STALE_SECONDS:
+                        lf.unlink()
+                        continue
+                except OSError:
+                    continue
+                if time.monotonic() > deadline:
+                    raise TimeoutError("settings.yaml is locked by another process")
+                time.sleep(0.05)
+        try:
+            yield
+        finally:
+            with contextlib.suppress(OSError):
+                lf.unlink()
 
 
 def load() -> Settings:
@@ -272,7 +308,7 @@ def load() -> Settings:
 
 
 def save(s: Settings) -> None:
-    with _lock:
+    with file_lock():
         f = path("settings.yaml")
         tmp = f.with_suffix(".tmp")
         tmp.write_text(yaml.safe_dump(s.model_dump(mode="json"), sort_keys=False), encoding="utf-8")

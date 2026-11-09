@@ -18,7 +18,8 @@ from ..connector import Connector, Health, tool
 
 FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 SECRET_GLOBS = ["*secret*", "*token*", "*password*", "*.key", "*.pem", "*.pfx", "*.p12", "id_*", ".env", ".env.*",
-                "*.kdbx", "credentials*", "*.enc", "api.key", "*cookie*", "Login Data", "*.db"]
+                "*.kdbx", "credentials*", "*.enc", "api.key", "*cookie*", "Login Data", "*.db",
+                "settings-backups", "settings.yaml*"]  # pmjc's own settings and their backups are never readable
 
 
 def _run(argv: list[str], timeout: int = 30) -> subprocess.CompletedProcess:

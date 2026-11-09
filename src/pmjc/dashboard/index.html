@@ -176,13 +176,23 @@ async function jobsTab(){ const js=await api("/api/jobs");
   $("#js").onclick=async()=>{await api("/api/jobs",{method:"POST",body:$("#jj").value});render()};
 }
 
+function settingsView(v){ // a settings change proposed from chat: risk badge, one line per path, the model's claim last (all escaped)
+  return `<p><span class="pill ${v.badge==="OFF-LOWER"?"":"warn"}">${esc(v.badge)}</span> <b>${esc(v.title)}</b>${v.surface?` <span class="muted">via ${esc(v.surface)}</span>`:""}</p>
+   <table>${v.lines.map(l=>`<tr><td><code>${esc(l.path)}</code></td><td>${esc(l.text)}</td></tr>`).join("")}</table>
+   ${v.reason?`<p class="muted">model's claim: &ldquo;${esc(v.reason)}&rdquo;</p>`:""}
+   ${v.two_step?`<p class="warn">Routing or cost change: review the lines above, then press Approve twice.</p>`:""}`}
+
 async function approvals(){ const a=await api("/api/approvals?status=pending");
   $("#main").innerHTML=(a.length?"":'<div class="card muted">Nothing waiting.</div>')+a.map(x=>`<div class="card"><div class="row"><b>${esc(x.tool)}</b>
    <span class="muted grow">${esc(x.requested_by)} · ${when(x.created)} · expires ${when(x.expires)}</span>
    <button class="b p" data-a="${esc(x.id)}">Approve</button><button class="b d" data-n="${esc(x.id)}">Deny</button></div>
-   <p>${esc(x.reason)}</p><pre>${esc(JSON.stringify(JSON.parse(x.args),null,2))}</pre></div>`).join("");
+   ${x.view?settingsView(x.view):`<p>${esc(x.reason)}</p><pre>${esc(JSON.stringify(JSON.parse(x.args),null,2))}</pre>`}</div>`).join("");
   const dec=async(id,ok)=>{const r=await api("/api/approvals/"+id,{method:"POST",body:JSON.stringify({approve:ok})});alert(r.status);render()};
-  document.querySelectorAll("[data-a]").forEach(b=>b.onclick=()=>dec(b.dataset.a,true));
+  const two=Object.fromEntries(a.filter(x=>x.view&&x.view.two_step).map(x=>[x.id,1]));
+  document.querySelectorAll("[data-a]").forEach(b=>b.onclick=()=>{
+    const id=b.dataset.a;
+    if(two[id]&&!b.dataset.reviewed){b.dataset.reviewed="1";b.textContent="Confirm: I reviewed the changes";return}  // two-step: routing/cost settings
+    dec(id,true)});
   document.querySelectorAll("[data-n]").forEach(b=>b.onclick=()=>dec(b.dataset.n,false));
 }
 

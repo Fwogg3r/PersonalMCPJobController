@@ -101,6 +101,16 @@ CATALOG: list[dict] = [
      "workaround": "Last resort when no tool fits (e.g. editing a file): pmjc_shell_run proposes one short shell command "
                    "for the pmjc host. It always needs the owner's approval, is refused after reading third-party "
                    "content and for callers config doesn't allow, and its output is untrusted."},
+    {"task": "change pmjc's own settings (switch off background jobs, lower a limit, disable a provider, switch a profile)",
+     "pmjc": "pmjc_settings_get (what chat may change, current values, profiles, backups), pmjc_settings_set, "
+             "pmjc_settings_revert, pmjc_profile_switch (named profiles the owner wrote, e.g. gaming).",
+     "needs": [],
+     "limits": "Always needs the owner's approval (a diff old -> new; routing and cost changes take a two-step confirm). "
+               "Refused after you read third-party content and from jobs and watches. Only the safe direction (turn off, "
+               "lower, disable) of an allowlist; at most 3 settings of one risk class per proposal, 3 proposals per hour, "
+               "none for 30 minutes after a denial. Credentials, hosts, approvals, notify channels, programs to run and "
+               "budgets upward can't be changed from chat.",
+     "native": "-", "workaround": "Everything else: the owner edits settings.yaml or the dashboard; use pmjc_handoff to ask."},
     {"task": "use a local model", "pmjc": "lmstudio_status, lmstudio_ask (already-loaded models only)", "needs": ["lmstudio"],
      "limits": "Loading models needs approval.", "native": "-", "workaround": "-"},
     {"task": "GitHub", "pmjc": "github_notifications, github_search_issues, github_comment", "needs": ["github"],

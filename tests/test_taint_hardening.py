@@ -57,7 +57,7 @@ WRITERS = {
 def test_writer_tools_are_flagged():
     from pmjc import registry
     flagged = {t.name for t in registry.get().tools(include_unconfigured=True) if t.writes_state}
-    assert flagged == set(WRITERS)
+    assert flagged - {"pmjc_settings_set", "pmjc_settings_revert", "pmjc_profile_switch"} == set(WRITERS)  # settings tools: tests/test_settings_edit.py (refused when tainted, never direct)
 
 
 @pytest.mark.parametrize("name", sorted(WRITERS))

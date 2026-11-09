@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from . import __version__, agent, auth, config, creds, db, discord_door, executor, jobs, mcp_server, memory, registry, router
+from . import __version__, agent, auth, config, creds, db, discord_door, executor, jobs, mcp_server, memory, registry, router, settings_edit
 from .auth import Caller
 from .connector import Event
 
@@ -531,8 +531,13 @@ def create_app() -> FastAPI:
     # ---- approvals
     @app.get("/api/approvals", tags=["admin"])
     async def approvals(status: str = "pending", _: Caller = Depends(admin_caller)):
-        return db.q("SELECT id,tool,args,requested_by,reason,status,created,expires,result FROM approvals "
+        rows = db.q("SELECT id,tool,args,requested_by,reason,status,created,expires,result FROM approvals "
                     "WHERE status=? OR ?='all' ORDER BY created DESC LIMIT 200", status, status)
+        for r in rows:  # settings changes come with an escaped diff view (the dashboard shows it instead of raw JSON)
+            v = settings_edit.api_view(r)
+            if v:
+                r["view"] = v
+        return rows
 
 
     @app.post("/api/approvals/{aid}", tags=["admin"])
@@ -542,7 +547,7 @@ def create_app() -> FastAPI:
         return res
 
     @app.get("/approve/{aid}", include_in_schema=False)
-    async def approve_page(aid: str, sig: str = "", deny: int = 0):
+    async def approve_page(aid: str, sig: str = "", deny: int = 0, review: int = 0):
         """Link from a phone notification. GET only shows the request (link previews must not approve)."""
         verb = "deny" if deny else "approve"
         if not auth.check_sig(f"{verb}:{aid}", sig):
@@ -552,15 +557,25 @@ def create_app() -> FastAPI:
         if not rows:
             return HTMLResponse("<p>Unknown request.</p>", 404)
         r = rows[0]
-        args = html.escape(json.dumps(json.loads(r["args"]), indent=2))
-        button = "" if a["status"] != "pending" else (
-            f'<form method="post"><input type="hidden" name="sig" value="{html.escape(sig)}">'
-            f'<input type="hidden" name="deny" value="{deny}"><button style="font-size:1.3em;padding:.6em 1.4em">'
-            f'{"Deny" if deny else "Approve"}</button></form>')
+        view = settings_edit.view(r)
+        args = html.escape(json.dumps(json.loads(r["args"]), indent=2)) if view is None else settings_edit.html_view(r)
+        two_step = bool(view and view["two_step"]) and not deny
+        if a["status"] != "pending":
+            button = ""
+        elif two_step and not review:  # routing/cost settings change: read the diff, then a second page offers Approve
+            button = (f'<p>Routing or cost change: read the changes above.</p><a href="?sig={html.escape(sig)}&review=1" '
+                      'style="font-size:1.3em;padding:.6em 1.4em;border:1px solid;border-radius:6px;text-decoration:none">'
+                      'I reviewed it, continue</a>')
+        else:
+            button = (
+                f'<form method="post"><input type="hidden" name="sig" value="{html.escape(sig)}">'
+                f'<input type="hidden" name="deny" value="{deny}"><input type="hidden" name="reviewed" value="{1 if review else 0}">'
+                f'<button style="font-size:1.3em;padding:.6em 1.4em">{"Deny" if deny else "Approve"}</button></form>')
+        pre = f'<pre style="white-space:pre-wrap;background:#eee;padding:1em">{args}</pre>' if view is None else args
         return HTMLResponse(f"""<!doctype html><meta name=viewport content="width=device-width,initial-scale=1">
 <title>pmjc approval</title><body style="font-family:system-ui;max-width:40em;margin:1em auto;padding:0 1em">
 <h2>{html.escape(r['tool'])}</h2><p>Requested by {html.escape(r['requested_by'])}. {html.escape(r['reason'] or '')}</p>
-<p>Status: <b>{html.escape(a['status'])}</b></p><pre style="white-space:pre-wrap;background:#eee;padding:1em">{args}</pre>{button}""")
+<p>Status: <b>{html.escape(a['status'])}</b></p>{pre}{button}""")
 
     @app.post("/approve/{aid}", include_in_schema=False)
     async def approve_post(aid: str, request: Request):
@@ -569,6 +584,10 @@ def create_app() -> FastAPI:
         verb = "deny" if deny else "approve"
         if not auth.check_sig(f"{verb}:{aid}", str(form.get("sig", ""))):
             return HTMLResponse("<p>Invalid link.</p>", 403)
+        rows = db.q("SELECT tool,args,reason FROM approvals WHERE id=?", aid)
+        if (rows and not deny and settings_edit.needs_review(rows[0])
+                and str(form.get("reviewed", "0")) != "1"):
+            return HTMLResponse("<p>Review the changes first (open the link again).</p>", 400)
         res = await executor.decide(aid, not deny, "approval-link")
         _spawn_continue(aid, res)
         return HTMLResponse(f"<p>{html.escape(res.get('status', ''))}.</p>")

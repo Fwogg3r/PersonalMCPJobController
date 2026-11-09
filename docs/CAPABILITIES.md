@@ -100,14 +100,6 @@ Pick the **most native route**: your client's own abilities first (if it can act
 - **Better if your client can:** A shopping or browser connector in your client.
 - **Workaround:** -
 
-## Multi-page web research: compare sources, follow search results to several pages
-
-- **pmjc:** pmjc_research(question, max_sources)
-- **Needs:** web
-- **Limits:** Runs a sandboxed sub-run with only web_search and web_fetch (config `research.tools`) and returns a capped summary plus the URLs it read. Call it once per request with a self-contained question of at most 300 characters and no private details: the question goes to the web, and the sub-run knows nothing about the user. The summary is third-party text: afterwards the run can answer but not act freely, and it can't call pmjc_research again. Not available once the run has read web content, so call it before other web tools.
-- **Better if your client can:** Your client's own web search and fetch tools.
-- **Workaround:** web_search then web_fetch once each.
-
 ## Web research: search the web and read ordinary pages
 
 - **pmjc:** web_search (up to 5 queries per call), web_fetch (up to 5 URLs per call, readable text)
@@ -115,6 +107,14 @@ Pick the **most native route**: your client's own abilities first (if it can act
 - **Limits:** web_search needs a backend the owner configures (self-hosted SearXNG or a Brave Search API key; see docs/CONNECTORS.md). web_fetch is plain HTTP: no JavaScript, no logins, text only (8000 characters per page by default, 2 MB download cap); private, local and blocked domains are refused. Results are third-party text, so a run can make only ONE web_search and ONE web_fetch call after reading web content: put every query or URL into one list. web_fetch of owner-declared read_urls/read_sites stays allowed after taint.
 - **Better if your client can:** Your client's own web search and fetch tools.
 - **Workaround:** browser_read for pages that need a login or scripts.
+
+## Multi-page web research: compare sources, follow search results to several pages
+
+- **pmjc:** pmjc_research(question, max_sources)
+- **Needs:** web
+- **Limits:** Runs a sandboxed sub-run with only web_search and web_fetch (config research.tools) and returns a capped summary plus the URLs it read. Call it once per request with a self-contained question of at most 300 characters and no private details: the question goes to the web, and the sub-run knows nothing about the user. The summary is third-party text: afterwards the run can answer but not act freely, and it can't call pmjc_research again. Not available once the run has read web content, so call it before other web tools.
+- **Better if your client can:** Your client's own web search and fetch tools.
+- **Workaround:** web_search then web_fetch once each.
 
 ## Shopping: search Craigslist posts (price, area, link)
 
@@ -136,7 +136,7 @@ Pick the **most native route**: your client's own abilities first (if it can act
 
 - **pmjc:** browser_read (text and links), browser_extract (rows by CSS selector), browser_browse (scroll, wait, expand without submitting; read-only), browser_act (type, press keys, click anything; needs approval) in pmjc's own signed-in browser, allowed domains
 - **Needs:** browser
-- **Limits:** browser_read/extract/browse can't type or submit; browser_act can and needs approval (max 10 steps per call). After a run has read one page, further reads are refused unless the owner declared the URL, prefix or site (read_urls/read_prefixes/read_sites; sites never with a query string) in the job or watch.
+- **Limits:** browser_read/extract/browse can't type or submit; browser_act can and needs approval (max 10 steps per call). After a run has read one page, further reads are refused unless the owner declared the URL or site (read_urls/read_sites) in the job or watch.
 - **Better if your client can:** Browser or computer control in your client.
 - **Workaround:** pmjc_handoff with the link, so the user opens it themselves.
 
@@ -147,6 +147,14 @@ Pick the **most native route**: your client's own abilities first (if it can act
 - **Limits:** Needs approval; only configured machines and commands. Returns within about 8 s: a longer command returns status running with a run_id and keeps going; follow up with command_status(run_id).
 - **Better if your client can:** Your client's shell if it has one.
 - **Workaround:** Last resort when no tool fits (e.g. editing a file): pmjc_shell_run proposes one short shell command for the pmjc host. It always needs the owner's approval, is refused after reading third-party content and for callers config doesn't allow, and its output is untrusted.
+
+## Change pmjc's own settings (switch off background jobs, lower a limit, disable a provider, switch a profile)
+
+- **pmjc:** pmjc_settings_get (what chat may change, current values, profiles, backups), pmjc_settings_set, pmjc_settings_revert, pmjc_profile_switch (named profiles the owner wrote, e.g. gaming).
+- **Needs:** nothing (built in)
+- **Limits:** Always needs the owner's approval (a diff old -> new; routing and cost changes take a two-step confirm). Refused after you read third-party content and from jobs and watches. Only the safe direction (turn off, lower, disable) of an allowlist; at most 3 settings of one risk class per proposal, 3 proposals per hour, none for 30 minutes after a denial. Credentials, hosts, approvals, notify channels, programs to run and budgets upward can't be changed from chat.
+- **Better if your client can:** -
+- **Workaround:** Everything else: the owner edits settings.yaml or the dashboard; use pmjc_handoff to ask.
 
 ## Use a local model
 
