@@ -567,5 +567,10 @@ def doctor():
     _out(checks)
 
 
+from .evals.cli import eval_app  # noqa: E402
+
+app.add_typer(eval_app, name="eval")
+
+
 if __name__ == "__main__":
     app()
