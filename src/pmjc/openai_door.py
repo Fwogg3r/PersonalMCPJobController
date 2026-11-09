@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import re
 import json
 import secrets
 import time
@@ -56,8 +57,20 @@ def text_of(content) -> str:
     return ""
 
 
-def conversation_key(caller_name: str, body: dict, headers, messages: list) -> str:
-    """Stable key for the conversation: a client-provided id, else the first user message; always per token."""
+def _norm(s: str) -> str:
+    """Assistant text as the client will echo it back: progress lines dropped, whitespace collapsed, first 500 chars."""
+    lines = [ln for ln in s.splitlines() if not re.fullmatch(r"\s*_calling .*\.\.\._\s*", ln)]
+    return " ".join(" ".join(lines).split())[:500]
+
+
+def pair_key(caller_name: str, first_user: str, first_answer: str) -> str:
+    return hashlib.sha256(f"pair\0{caller_name}\0{first_user.strip()}\0{_norm(first_answer)}".encode()).hexdigest()
+
+
+def conversation_key(caller_name: str, body: dict, headers, messages: list) -> str | None:
+    """Stable key for the conversation, always per token. A client-provided id wins. Otherwise the first user
+    message together with the first assistant reply identifies it (two chats that both open with "hi" get
+    different answers, so different threads). None means a brand-new conversation: no reply yet, so a new thread."""
     cid = headers.get("x-conversation-id") or body.get("conversation_id")
     meta = body.get("metadata")
     if not cid and isinstance(meta, dict):
@@ -67,7 +80,10 @@ def conversation_key(caller_name: str, body: dict, headers, messages: list) -> s
     if cid:
         return hashlib.sha256(f"id\0{caller_name}\0{cid}".encode()).hexdigest()
     first = next((text_of(m.get("content")) for m in messages if m.get("role") == "user"), "")
-    return hashlib.sha256(f"first\0{caller_name}\0{first.strip()}".encode()).hexdigest()
+    reply = next((text_of(m.get("content")) for m in messages if m.get("role") == "assistant"), None)
+    if reply is None:
+        return None
+    return pair_key(caller_name, first, reply)
 
 
 def thread_for(key: str) -> str | None:
@@ -163,7 +179,8 @@ def register(app: FastAPI, bearer, need) -> None:
             return _err(404, f"unknown model {model!r}; GET /v1/models lists them", "model_not_found")
         private, order = mode
         key = conversation_key(c.name, body, request.headers, messages)
-        tid = thread_for(key)
+        tid = thread_for(key) if key else None
+        first_user = next((text_of(m.get("content")) for m in messages if m.get("role") == "user"), "")
         caller = Caller(f"ask:{c.name}", "remote", set(c.scopes))
         queue: asyncio.Queue = asyncio.Queue()
         stream = bool(body.get("stream"))
@@ -177,10 +194,11 @@ def register(app: FastAPI, bearer, need) -> None:
             from . import ask as ask_mod
             res = await ask_mod.ask(caller, text, private=private, provider_order=order, thread_id=tid,
                                     history_turns=fd.history_turns)
-            thread_store(key, res["thread_id"])
+            answer = res["answer"] + approvals_block(res["thread_id"], started)
+            thread_store(key or pair_key(c.name, first_user, answer), res["thread_id"])
             usage = res.get("usage") or {}
             pt, ct = int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0))
-            return {"answer": res["answer"] + approvals_block(res["thread_id"], started), "thread_id": res["thread_id"],
+            return {"answer": answer, "thread_id": res["thread_id"],
                     "usage": {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct}}
 
         cid, created = "chatcmpl-" + secrets.token_hex(8), int(time.time())

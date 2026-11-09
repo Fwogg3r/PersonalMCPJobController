@@ -86,14 +86,18 @@ def test_same_conversation_same_thread(api):
     t2 = c.post("/v1/chat/completions", json=body("two"), headers=hh).json()["pmjc_thread_id"]
     t3 = c.post("/v1/chat/completions", json=body("one", user="other"), headers=h).json()["pmjc_thread_id"]
     assert t1 == t2 and t3 != t1 and calls[1]["thread_id"] == t1
-    # no id: hash of the first user message
+    # no id: the first question plus the first answer identify the conversation
     m1 = {"model": "pmjc", "messages": [{"role": "user", "content": "start"}]}
-    a = c.post("/v1/chat/completions", json=m1, headers=h).json()["pmjc_thread_id"]
-    m2 = {"model": "pmjc", "messages": [{"role": "user", "content": "start"}, {"role": "assistant", "content": "x"},
+    r1 = c.post("/v1/chat/completions", json=m1, headers=h).json()
+    a, reply = r1["pmjc_thread_id"], r1["choices"][0]["message"]["content"]
+    m2 = {"model": "pmjc", "messages": [{"role": "user", "content": "start"}, {"role": "assistant", "content": reply},
                                         {"role": "user", "content": "more"}]}
     b = c.post("/v1/chat/completions", json=m2, headers=h).json()["pmjc_thread_id"]
     assert a == b
-    assert calls[-1]["text"] == "more"
+    # a second new chat with the same opening line is a new thread, not the first one
+    a2 = c.post("/v1/chat/completions", json=m1, headers=h).json()["pmjc_thread_id"]
+    assert a2 != a
+    assert calls[-2]["text"] == "more"
 
 
 def test_local_and_provider_models(api):

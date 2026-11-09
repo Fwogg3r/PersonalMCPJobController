@@ -23,7 +23,7 @@ One chat app for everything: any client that speaks the OpenAI chat API (desktop
 Each chat maps to a pmjc thread, so history, notes and approvals carry over (and show in the dashboard):
 
 1. A client-provided conversation id: header `X-Conversation-Id`, or `conversation_id`, `metadata.conversation_id`, `metadata.chat_id` or `user` in the request body.
-2. Otherwise a stable hash of the first user message in the request.
+2. Otherwise the first user message together with the first assistant reply. A chat with no reply yet is a new conversation and gets a new thread, so two chats that both open with "hi" stay separate.
 
 Either way the key is scoped to the token. Only the **last user message** is used as the request; earlier messages sent by the client are ignored, and the model gets the thread's own history (`front_door.history_turns`). The thread id is returned in `pmjc_thread_id` of non-streaming replies.
 
@@ -33,7 +33,7 @@ Either way the key is scoped to the token. Only the **last user message** is use
 
 ## Approvals
 
-Actions with side effects still need your approval. If a request leaves approvals pending, the answer ends with a block listing each action with signed **Approve** and **Deny** links. Once you decide, pmjc continues the thread and stores the outcome; your next message in the same chat includes it in the history. Links are prefixed with `public_url` when it is set.
+Actions with side effects still need your approval. If a request leaves approvals pending, the answer ends with a block listing each action with signed **Approve** and **Deny** links. Once you decide, pmjc continues the thread and stores the outcome; your next message in the same chat includes it in the history. Links are prefixed with `public_url` when it is set; set it when you use a phone app, because many apps can't open relative links.
 
 ## Settings (`front_door` in settings.yaml)
 

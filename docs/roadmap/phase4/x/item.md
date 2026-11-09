@@ -19,3 +19,5 @@ links: [phase4/k]
 - Streaming is a role chunk, optional `_calling tool..._` progress lines (`front_door.stream_progress`, default on), then the whole answer once ready, with a keep-alive comment every 10 s. True token streaming stays with phase4/k.
 - Pending approvals for the run are appended to the answer with signed approve/deny links (prefixed by `public_url` when set). Usage fields are zeros until `ask()` reports token counts.
 - Limits: body capped at 1 MB, 30 requests a minute per token (config).
+
+Follow-up (2026-11-09, review): without a client conversation id, a chat is identified by its first question plus first answer (new chats always get a new thread), so two chats opening with the same line no longer merge. Set public_url for phone apps (relative approve links).
