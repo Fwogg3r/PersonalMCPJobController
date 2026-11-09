@@ -110,6 +110,7 @@ class Settings(BaseModel):
     disabled_connectors: list[str] = Field(default_factory=list)
     enabled_plugins: list[str] = Field(default_factory=list)  # entry-point connector names allowed to load
     auto_approve: list[str] = Field(default_factory=list)  # act tools that run without approval (any caller)
+    approval_outcome_notify: bool = True  # notify channels get the follow-up after an approval decided outside Discord
     allowed_hosts: list[str] = Field(default_factory=list)  # extra Host headers accepted (e.g. your tunnel hostname)
     # Background activity. Everything is off by default: pmjc only reads data when an agent or you ask.
     monitoring_enabled: bool = False  # run event sources (e.g. polling Windows notifications) in the background

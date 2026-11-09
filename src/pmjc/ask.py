@@ -6,6 +6,9 @@ the user's notification channel and through /api/watches/{id}.
 """
 from __future__ import annotations
 
+import contextlib
+import json
+
 from . import agent, db, memory, registry, router
 from .auth import Caller
 
@@ -22,7 +25,11 @@ How to handle the user's request:
    pmjc_job_create instead of a watch.
 6. If a tool returns an error, try one fix (different arguments or another tool that fits). If that also fails,
    tell the user plainly what failed, quote the error, and ask how to proceed. Never claim something worked
-   when it didn't."""
+   when it didn't.
+7. Before saying you can't do something, solve it with what you have: call pmjc_capabilities with the task to see
+   limits and workarounds, try the closest tool (e.g. pmjc_contact_set to save an id on a contact, pmjc_memory_set
+   for a durable fact). If nothing fits, say plainly which tool is missing, what you tried, and the closest
+   workaround the user could do themselves."""
 
 WATCH_TOOLS = {"pmjc_connectors", "pmjc_watch_start", "pmjc_watch_status", "pmjc_watch_cancel", "pmjc_watch_list",
                "pmjc_job_create", "pmjc_jobs_list", "pmjc_context", "pmjc_capabilities", "pmjc_threads_recent",
@@ -114,3 +121,30 @@ async def ask(caller: Caller, text: str, private: bool = False, provider_order: 
     memory.thread_add(thread_id, "answer", res.text, author=res.provider, trust=memory.trust_of(caller))
     return {"answer": res.text, "provider": res.provider, "watches": watches, "thread_id": thread_id,
             "cost_usd": round(res.cost_usd, 5), "fell_back": res.fell_back}
+
+
+async def continue_after_approval(aid: str, res: dict) -> str | None:
+    """After an approval decided over REST, CLI or the approval link, feed the outcome back into its thread (as the
+    Discord door does), store the answer there as unread, and send it to the notify channels if
+    config approval_outcome_notify is on. Returns the answer, or None if there is no thread to continue."""
+    from . import config, registry as reg_mod
+    rows = db.q("SELECT tool, thread_id FROM approvals WHERE id=?", aid)
+    status = res.get("status")
+    if not rows or not rows[0].get("thread_id") or status not in ("done", "denied", "failed"):
+        return None
+    detail = res.get("result") if res.get("result") is not None else res.get("error", "")
+    if not isinstance(detail, str):
+        detail = json.dumps(detail, default=str)
+    tid = rows[0]["thread_id"]
+    caller = Caller(f"approval:{aid}", "job", {"sources", "jobs", "actions"})
+    out = await ask(caller, outcome_text(rows[0]["tool"], status, detail), thread_id=tid, history_turns=3)
+    with contextlib.suppress(Exception):
+        db.x("UPDATE threads SET status='updated', unread=1 WHERE id=?", tid)
+    if config.load().approval_outcome_notify:
+        reg = reg_mod.get()
+        ids = config.load().notify_channels
+        chans = [reg.connectors[i] for i in ids if i in reg.connectors and reg.connectors[i].is_channel] or reg.channels()[:1]
+        for ch in chans:
+            with contextlib.suppress(Exception):
+                await ch.notify(f"pmjc: {rows[0]['tool']} {status}", f"{out['answer'][:3400]}\n\nResume: thread {tid}")
+    return out["answer"]

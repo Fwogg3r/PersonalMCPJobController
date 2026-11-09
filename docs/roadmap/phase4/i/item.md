@@ -1,8 +1,14 @@
 ---
 title: "Act on outcomes: approval results and errors return to the run, which retries, fixes or asks"
-status: active
+status: done
 links: [phase4/j]
 ---
 Today a run that hits an act tool gets pending_approval and ends; the decision (approved/denied/failed) only lands in the thread log, so the model never sees it. Wanted: approval outcomes and tool errors flow back into the same conversation and the model continues: on success it confirms, on error it tries a fix (different args, another tool) up to a small budget, then asks the user with the error text. Design: after executor.decide, resume the pmjc thread with an 'approval result' turn (ask() with history) instead of only logging; for errors inside a run, feed the error back as the tool result (already done) and add a retry/ask-for-help rule to ASK_SYSTEM. Keep the act ledger and the dual-LLM rule (a tainted run still can't act). Discord: post the outcome under the approval message and continue the thread.
 
 Progress (2026-11-08): Discord path done. After an Approve/Deny button, the outcome (done/denied/failed, result or error capped at 500 chars) is fed back into the same conversation as the next turn (ask.outcome_text, Door._continue), so the model confirms, fixes once or asks. ASK_SYSTEM rule 6: on a tool error try one fix, then tell the user and quote the error. Test test_approval_result_continues_the_conversation. Implemented by the local model (Qwen3.8-27B via aider) under review. Still to do: continue the run for approvals decided over REST, CLI and the approval link (they only log to the thread today); decide whether the result text should taint the run (act results are mostly confirmations, but some may echo third-party text).
+
+Attempt (2026-11-08): two idea-level runs of the local model (aider + Qwen3.8-27B) on the REST/CLI/link part failed by using the whole 16k output on thinking (input 40-51k of 64k); no edits. Its plan was right: hook the continuation in executor.decide, let the Discord door opt out, and handle the CLI event loop closing. Waiting on the staged local-agent pipeline (AgentController roadmap phase1/d).
+
+Open question (2026-11-08): for approvals decided over REST, CLI or the approval link there is no live conversation to answer into. Options: run the continuation and add its answer to the thread as an unread note (seen next session), or also send it through the notify channel. Needs the owner's pick before building.
+
+Done (2026-11-08): owner picked "note and notify". Approvals decided over REST (/api/approvals), the approval link and the CLI now continue the thread too (ask.continue_after_approval: outcome_text turn with 3 turns of history, answer stored in the thread and marked unread). Config `approval_outcome_notify` (default true) also sends the answer to the notify channels. REST/link run it in the background so the HTTP reply doesn't wait. Test test_continue_after_approval_notes_thread_and_notifies. Open: whether act results should taint the run.

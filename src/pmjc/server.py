@@ -24,6 +24,18 @@ DASHBOARD = Path(__file__).parent / "dashboard" / "index.html"
 
 
 # --- request guards -------------------------------------------------------------------------------------
+_bg: set = set()
+
+
+def _spawn_continue(aid: str, res: dict) -> None:
+    """Continue the approval's thread in the background (phase4/i); the HTTP answer doesn't wait for the model."""
+    import asyncio
+    from . import ask as ask_mod
+    t = asyncio.ensure_future(ask_mod.continue_after_approval(aid, res))
+    _bg.add(t)
+    t.add_done_callback(_bg.discard)
+
+
 def _allowed_hosts() -> set[str]:
     s = config.load()
     hosts = {"127.0.0.1", "localhost", "[::1]", *s.allowed_hosts}
@@ -519,7 +531,9 @@ def create_app() -> FastAPI:
 
     @app.post("/api/approvals/{aid}", tags=["admin"])
     async def decide(aid: str, d: Decision, c: Caller = Depends(admin_caller)):
-        return await executor.decide(aid, d.approve, c.name)
+        res = await executor.decide(aid, d.approve, c.name)
+        _spawn_continue(aid, res)
+        return res
 
     @app.get("/approve/{aid}", include_in_schema=False)
     async def approve_page(aid: str, sig: str = "", deny: int = 0):
@@ -550,6 +564,7 @@ def create_app() -> FastAPI:
         if not auth.check_sig(f"{verb}:{aid}", str(form.get("sig", ""))):
             return HTMLResponse("<p>Invalid link.</p>", 403)
         res = await executor.decide(aid, not deny, "approval-link")
+        _spawn_continue(aid, res)
         return HTMLResponse(f"<p>{html.escape(res.get('status', ''))}.</p>")
 
     # ---- tokens and kill switch

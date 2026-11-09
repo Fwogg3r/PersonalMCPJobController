@@ -442,3 +442,33 @@ async def test_ask_offers_writer_tools(home, monkeypatch):
     await ask_mod.ask(agent(), "add id 123 to Anti's contact card")
     assert {"pmjc_contact_set", "pmjc_memory_set", "pmjc_contact_find"} <= seen["tools"]
     assert "pmjc_memory_delete" not in seen["tools"] and "pmjc_job_delete" not in seen["tools"]
+
+
+def test_ask_system_has_problem_solving_rule():
+    from pmjc import ask
+    assert "pmjc_capabilities" in ask.ASK_SYSTEM and "Before saying you can't" in ask.ASK_SYSTEM
+
+
+async def test_continue_after_approval_notes_thread_and_notifies(home, monkeypatch):
+    import time
+    from pmjc import ask, config, db, memory, registry
+    tid = memory.thread_new("send it", by="t")
+    db.x("INSERT INTO approvals(id,tool,args,payload_hash,requested_by,reason,status,created,expires,thread_id) "
+         "VALUES('a1','fake_send','{}','h','t','','done',?,?,?)", time.time(), time.time() + 60, tid)
+    seen, sent = [], []
+
+    async def fake_ask(caller, text, **kw):
+        seen.append((text, kw.get("thread_id")))
+        return {"answer": "It was sent."}
+
+    class Ch:
+        async def notify(self, title, body):
+            sent.append(body)
+    monkeypatch.setattr(ask, "ask", fake_ask)
+    monkeypatch.setattr(registry.get(), "channels", lambda: [Ch()])
+    assert await ask.continue_after_approval("a1", {"status": "done", "result": "ok"}) == "It was sent."
+    assert "[approval result]" in seen[0][0] and seen[0][1] == tid and "It was sent." in sent[0]
+    from types import SimpleNamespace
+    monkeypatch.setattr(config, "load", lambda: SimpleNamespace(approval_outcome_notify=False, notify_channels=[]))
+    await ask.continue_after_approval("a1", {"status": "done", "result": "ok"})
+    assert len(sent) == 1

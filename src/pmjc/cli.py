@@ -1,6 +1,7 @@
 """pmjc command line. Run `pmjc --help`."""
 from __future__ import annotations
 
+import contextlib
 import asyncio
 import getpass
 import json
@@ -415,7 +416,11 @@ def appr_approve(approval_id: str, deny: bool = typer.Option(False, "--deny")):
 
     async def go():
         try:
-            return await executor.decide(approval_id, not deny, "cli")
+            res = await executor.decide(approval_id, not deny, "cli")
+            with contextlib.suppress(Exception):
+                from . import ask as ask_mod
+                await ask_mod.continue_after_approval(approval_id, res)
+            return res
         finally:
             await registry.get().close()
     _out(asyncio.run(go()))
