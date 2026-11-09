@@ -23,7 +23,7 @@ import logging
 import random
 import time
 
-from . import agent, config, creds, db, defang, executor, memory, registry, router, routing
+from . import agent, config, creds, db, defang, executor, memory, registry, router, routing, settings_edit
 from .auth import Caller
 
 log = logging.getLogger("pmjc.discord_door")
@@ -86,9 +86,16 @@ def chunks(text: str, size: int = MAX_MSG) -> list[str]:
     return out + [text]
 
 
-def approval_buttons(aid: str) -> list[dict]:
-    return [{"type": 1, "components": [
-        {"type": 2, "style": 3, "label": "Approve", "custom_id": f"{BUTTON_PREFIX}a:{aid}"},
+def approval_buttons(aid: str, reviewed: bool = False) -> list[dict]:
+    """Approve/Deny. A settings change in the routing or cost class gets a two-step confirm: the first button is
+    Review (it edits the message and then offers Approve)."""
+    two_step = False
+    if not reviewed:
+        rows = db.q("SELECT tool, args, reason FROM approvals WHERE id=?", aid)
+        two_step = bool(rows and settings_edit.needs_review(rows[0]))
+    first = ({"type": 2, "style": 1, "label": "Review", "custom_id": f"{BUTTON_PREFIX}r:{aid}"} if two_step else
+             {"type": 2, "style": 3, "label": "Approve", "custom_id": f"{BUTTON_PREFIX}a:{aid}"})
+    return [{"type": 1, "components": [first,
         {"type": 2, "style": 4, "label": "Deny", "custom_id": f"{BUTTON_PREFIX}d:{aid}"}]}]
 
 
@@ -100,7 +107,9 @@ def route_buttons(choice: dict) -> list[dict]:
     return [{"type": 1, "components": btns}] if btns else []
 
 
-def approval_text(a: dict) -> str:
+def approval_text(a: dict, reviewed: bool = False) -> str:
+    if a.get("tool") in settings_edit.TOOLS and settings_edit.view(a):  # an escaped old -> new diff, not raw JSON
+        return settings_edit.discord_text(a, reviewed)
     args = a.get("args") or "{}"
     limit = 1700 if a.get("tool") == "pmjc_shell_run" else 900  # a shell command is always shown whole
     if len(args) > limit:
@@ -366,7 +375,20 @@ class Door:
         if kind in ("del", "keep"):
             await self._delete_choice(i, cb, kind == "del", aid)
             return
+        if kind == "r":
+            await self._review_button(i, cb, aid)
+            return
         await self._decide_button(i, cb, kind == "a", aid, user)
+
+    async def _review_button(self, i: dict, cb: str, aid: str) -> None:
+        """Step one of a two-step settings approval: show the diff again as reviewed and offer Approve."""
+        row = db.q("SELECT tool, args, reason, status FROM approvals WHERE id=?", aid)
+        if not row or row[0]["status"] != "pending":
+            await self._ephemeral(cb, f"Already {row[0]['status'] if row else 'gone'}.")
+            return
+        await self.api("POST", cb, {"type": 7, "data": {"content": approval_text(row[0], reviewed=True)[:MAX_MSG],
+                                                          "components": approval_buttons(aid, reviewed=True),
+                                                          "allowed_mentions": {"parse": []}}})
 
     def _ephemeral(self, cb: str, text: str):
         return self.api("POST", cb, {"type": 4, "data": {"content": text, "flags": 64}})
@@ -379,9 +401,13 @@ class Door:
         if aid in self._deciding:
             await self._ephemeral(cb, "Already approved, running..." if approve else "Already being decided...")
             return
-        row = db.q("SELECT tool, status FROM approvals WHERE id=?", aid)
+        row = db.q("SELECT tool, args, reason, status FROM approvals WHERE id=?", aid)
         if row and row[0]["status"] != "pending":
             await self._ephemeral(cb, f"Already {row[0]['status']}.")
+            return
+        if (approve and row and settings_edit.needs_review(row[0])
+                and settings_edit.REVIEWED_MARK not in ((i.get("message") or {}).get("content") or "")):
+            await self._ephemeral(cb, "Press Review first, then Approve.")
             return
         self._deciding.add(aid)
         tool_name = row[0]["tool"] if row else "the action"

@@ -246,6 +246,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The main protections:
 - Approvals are single-use and tied to a hash of the exact action. A link preview can't approve anything, because approving takes a POST.
 - Host and Origin checks block DNS rebinding and cross-site requests.
 - Tokens are stored hashed, and the audit log holds metadata only.
+- Chat can change a few settings in the safe direction (turn things off, lower limits, switch your own profiles) with your approval and a diff; credentials, hosts, approvals and spend limits upward stay in `settings.yaml` or the dashboard. See "Settings from chat" in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 Like any keyring or browser profile, anything running as your OS user can read pmjc's secrets. pmjc doesn't protect against malware already on the PC.
 

@@ -15,7 +15,7 @@ import time
 from typing import Any
 from urllib.parse import urlparse, urlsplit
 
-from . import auth, config, db, defang, memory, registry, results, route_choice, shell
+from . import auth, config, db, defang, memory, registry, results, route_choice, settings_edit, shell
 from .auth import Caller
 
 log = logging.getLogger("pmjc.executor")
@@ -159,6 +159,13 @@ async def _call_tool(caller: Caller, name: str, args: dict | None, reason: str) 
     if not caller.can(need):
         db.audit(caller.name, name, h, "denied", f"missing scope {need}")
         raise Denied(f"{caller.name} lacks scope '{need}' for {name}")
+    if name in settings_edit.TOOLS:  # settings from chat: refuse tainted/job callers and limits; rebuild the exact args
+        try:
+            args = settings_edit.prepare(caller, name, args, reason)
+        except settings_edit.SettingsDenied as e:
+            db.audit(caller.name, name, h, "denied", str(e)[:200])
+            raise Denied(str(e)) from e
+        h = payload_hash(name, args)
     quarantined_ok = caller.quarantine and not caller.sensitive  # research sub-run that still holds nothing private
     if t.egress and caller.untrusted and not quarantined_ok and not declared_read(caller, name, args):
         db.audit(caller.name, name, h, "denied", "egress after untrusted content")
@@ -169,8 +176,9 @@ async def _call_tool(caller: Caller, name: str, args: dict | None, reason: str) 
     if t.scope == "act":
         if memory.act_done(caller.thread_id, name, h):  # same act, same payload, same thread: the user decides again
             return await request_approval(caller, name, args, "already done in this thread; approve only if it should repeat")
-        auto = (name in caller.auto_approve or name in config.load().auto_approve) and name != shell.TOOL
-        if caller.untrusted or name == shell.TOOL or (caller.needs_approval and not auto):  # shell: always approved
+        never_auto = name == shell.TOOL or name in settings_edit.TOOLS  # always approved, even for auto_approve or the CLI
+        auto = (name in caller.auto_approve or name in config.load().auto_approve) and not never_auto
+        if caller.untrusted or never_auto or (caller.needs_approval and not auto):
             why = reason or ("proposed by a run that read untrusted content" if caller.untrusted else "")
             return await request_approval(caller, name, args, why)
     try:
@@ -218,6 +226,9 @@ def _thread_log(tid: str | None, text: str) -> None:
 async def _announce(aid: str, name: str, args: dict, by: str, reason: str, tainted: bool = False,
                     seen: set[str] | None = None) -> None:
     preview = defang.text(json.dumps(args, default=str), tainted, seen, wrap=False)  # a tainted run's links can't unfurl
+    if name in settings_edit.TOOLS:  # a settings diff, not raw JSON
+        row = {"tool": name, "args": json.dumps(args, default=str), "reason": reason}
+        preview = settings_edit.plain_text(row)
     limit = 1700 if name == shell.TOOL else 600  # a shell command is always shown whole
     if len(preview) > limit:
         preview = preview[:limit] + "..."
@@ -280,6 +291,8 @@ async def _decide(aid: str, approve: bool, decided_by: str) -> dict:
             db.audit(decided_by, a["tool"], a["payload_hash"], "shell_result",
                      f"{aid}: exit {res.get('exit_code')} timed_out={res.get('timed_out')} truncated={res.get('truncated')}"
                      + (f" running run_id={res.get('run_id')}" if res.get("status") == "running" else ""))
+        if a["tool"] in settings_edit.TOOLS:
+            settings_edit.audit_applied(a, res, decided_by)
         _thread_log(a.get("thread_id"), f"{a['tool']} was approved by the user and ran (approval {aid})")
         memory.act_record(a.get("thread_id"), a["tool"], a["payload_hash"], aid)
         _route(res, a.get("thread_id"))

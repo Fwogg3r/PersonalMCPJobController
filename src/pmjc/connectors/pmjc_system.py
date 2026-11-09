@@ -409,3 +409,46 @@ class Pmjc(Connector):
         detached_children is true, something the command started (e.g. a window) is still running."""
         from .. import shell as shell_mod
         return await shell_mod.run(command, timeout_seconds, max_output_chars, wait_seconds=wait_seconds)
+
+    # --- settings from chat (see pmjc.settings_edit and docs/ARCHITECTURE.md, "Settings from chat") -------------
+    @tool(scope="read")
+    async def pmjc_settings_get(self, path: str | None = None) -> dict:
+        """The pmjc settings chat may change, with current values, the allowed direction and bounds of each, a summary
+        of the model providers (id, kind, trust, enabled), the owner's profiles (which one is active) and recent backup
+        ids. Only these paths are listed; everything else (credentials, hosts, approvals, notify channels, programs to
+        run, budgets upward) is edited by the owner in settings.yaml or the dashboard. path: optional prefix such as
+        "router" or "routing[openai-api]"."""
+        from .. import settings_edit
+        return settings_edit.get(path)
+
+    @tool(scope="act", writes_state=True)
+    async def pmjc_settings_set(self, changes: dict, reason: str, _base_hash: str | None = None, _old: dict | None = None,
+                                _risk: list | None = None, _surface: str = "") -> dict:
+        """Propose changes to pmjc's own settings: changes = {"settings path": new value}, at most 3 paths of one risk
+        class, only the paths and directions pmjc_settings_get lists (turn things off, lower limits, disable a provider
+        or connector; nothing that widens reach or spend). Always needs the owner's approval, shown as old -> new per
+        path with your reason quoted as your claim; never runs from a chat that read third-party content, from jobs or
+        watches. At most 3 proposals per hour, and none for 30 minutes after the owner denied one. reason: one short
+        sentence for the owner. Returns the applied diff and a backup id."""
+        from .. import settings_edit
+        return settings_edit.apply("set", changes, _base_hash)
+
+    @tool(scope="act", writes_state=True)
+    async def pmjc_settings_revert(self, backup_id: str, reason: str = "", _changes: dict | None = None,
+                                   _base_hash: str | None = None, _backup_sha: str | None = None, _old: dict | None = None,
+                                   _risk: list | None = None, _surface: str = "") -> dict:
+        """Propose restoring the settings a backup (id from pmjc_settings_get) held, as a diff against the current
+        file restricted to the paths chat may change. Refused if the backup differs on any other path (the owner
+        restores those in the dashboard). Same approval flow and limits as pmjc_settings_set."""
+        from .. import settings_edit
+        return settings_edit.apply("revert", _changes, _base_hash, _backup_sha, backup_id)
+
+    @tool(scope="act", writes_state=True)
+    async def pmjc_profile_switch(self, name: str, reason: str = "", _changes: dict | None = None,
+                                  _base_hash: str | None = None, _old: dict | None = None, _risk: list | None = None,
+                                  _surface: str = "") -> dict:
+        """Propose switching to one of the owner's named settings profiles (listed by pmjc_settings_get), e.g. gaming
+        or travel. The owner wrote the profiles in settings.yaml; the approval shows the resulting changes as old -> new.
+        Same approval flow and limits as pmjc_settings_set."""
+        from .. import settings_edit
+        return settings_edit.apply("profile", _changes, _base_hash)

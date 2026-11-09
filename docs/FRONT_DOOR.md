@@ -70,6 +70,12 @@ A message that starts with one of these is answered by pmjc itself: no model run
 | `/model [tier\|provider\|auto]` | no argument: this thread's routing and the options; with one: sets the thread's sticky choice (`auto` clears it). Never widens: a private thread stays local |
 | `/threads` | recent threads |
 | `/new` | a fresh thread for this conversation; the next message starts clean |
+| `/settings [path]` | the pmjc settings chat may change with current values and allowed direction, providers (id, trust, enabled), your profiles and which is active |
+| `/set <path> <value>` or `/set a=1 b=2` | change settings (values are YAML: numbers, `true`/`false`, lists). Same checks as the `pmjc_settings_set` tool: hard-denied paths, safe direction only, bounds, at most 3 paths of one risk class. `off-lower` changes (turning things off, lowering limits) apply at once; `routing` and `cost` changes reply with the old to new diff and signed Approve / Deny links and change nothing until you approve |
+| `/profile [name]` | no argument: your profiles (written in `settings.yaml`); with a name: replies with the resulting diff and Approve / Deny links |
+| `/revert [backup_id]` | no argument: recent settings backups; with one: the diff against the current file (allowlisted paths only) with Approve / Deny links |
+
+The settings commands need a token with the `actions` scope (or admin) and need no model, so they work when no local model is running. You typed them yourself on an authenticated token, so they are not model proposals: an applied `/set` takes the same file lock, compare-and-swap and backup as the tool, and its audit rows say `owner command`. See "Settings from chat" in [ARCHITECTURE.md](ARCHITECTURE.md). Not wired into the Discord door's slash commands yet.
 
 `/strong` and `/local` are routing prefixes, not commands, and an unknown `/something` goes to the model as normal text. Commands are kept in the thread as `command` items that the model's history leaves out. Turn them off with `front_door.chat_commands: false`.
 

@@ -18,6 +18,10 @@ COMMANDS: dict[str, str] = {
     "model": "[tier|provider|auto]: show or set this thread's model choice",
     "threads": "recent threads",
     "new": "start a fresh thread for this conversation",
+    "settings": "[path]: the pmjc settings chat may change, current values, profiles",
+    "set": "<path> <value> | a=1 b=2: change settings (safe direction; routing/cost changes ask for approval)",
+    "profile": "[name]: list your settings profiles, or switch to one (asks for approval)",
+    "revert": "[backup_id]: list settings backups, or revert to one (asks for approval)",
 }
 MAX_LINES = 60
 _START = time.time()
@@ -287,4 +291,7 @@ async def run(name: str, arg: str, ctx: Ctx) -> str:
         return model_text(ctx, arg)
     if name == "threads":
         return threads_text(ctx)
+    if name in ("settings", "set", "profile", "revert"):  # owner-typed, no model; needs the `actions` scope
+        from . import settings_edit
+        return await settings_edit.owner_command(name, arg, ctx.caller, ctx.thread_id)
     return new_text(ctx)
