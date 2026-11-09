@@ -92,6 +92,14 @@ Pick the **most native route**: your client's own abilities first (if it can act
 - **Better if your client can:** A Home Assistant connector in your client.
 - **Workaround:** -
 
+## Shopping: search eBay listings (price, condition, buying option, quantity)
+
+- **pmjc:** ebay_search (up to 10 queries per call)
+- **Needs:** ebay
+- **Limits:** Needs the owner's eBay developer production keyset (App ID + Cert ID; developer.ebay.com, create an app, copy the Production keyset, then `pmjc auth set ebay`). Listing titles are third-party text, so a run can make only ONE ebay_search call: put every search of a watch into one `queries` list. Quantity and item specifics only with details=true (at most 20 lookups per call).
+- **Better if your client can:** A shopping or browser connector in your client.
+- **Workaround:** -
+
 ## Files on the user's machines
 
 - **pmjc:** files_list, files_search, files_read (read-only, allowed folders); ssh_run for other machines
