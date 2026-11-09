@@ -136,3 +136,43 @@ def test_ssh_machines_are_generic(home):
     with pytest.raises(PermissionError):
         c._argv("not-configured", "x")
     assert "BatchMode=yes" in c._argv("nas", "x")
+
+
+def test_ssh_self_route(home, monkeypatch):
+    """The machine pmjc runs on is always reachable (no SSH): by hostname, `local`, or a configured name that is the host."""
+    import asyncio
+    import socket
+    import sys
+    from pmjc import config
+    from pmjc.connectors.local import Ssh
+    monkeypatch.setattr(socket, "gethostname", lambda: "HostBox")
+    s = config.load()
+    s.connectors["ssh"] = {"machines": {"nas": {"host": "192.0.2.10"}, "hostbox": {"alias": "hostbox"},
+                                        "tower": {"alias": "tower"}}, "self_names": ["tower"]}
+    config.save(s)
+    c = Ssh()
+    m = c._machines()
+    assert m["hostbox"] == {"self": True} and m["tower"] == {"self": True} and "host" in m["nas"]
+    shell_exe = c._argv("local", "echo hi")
+    assert "ssh" not in shell_exe[0].lower() and shell_exe[-1] == "echo hi"
+    assert c._argv("HOSTBOX", "x")[-1] == "x"             # names match case-insensitively
+    assert c._argv("nas", "x")[0] == "ssh"                 # other machines still go over SSH
+    listed = {x["name"]: x for x in asyncio.run(c.ssh_machines())}
+    assert listed["hostbox"]["self"] and listed["hostbox"]["shell"] == ("cmd" if sys.platform == "win32" else "sh")
+    r = asyncio.run(c._ssh("local", "echo pmjc-self", 30))
+    assert r["exit_code"] == 0 and "pmjc-self" in r["stdout"]
+    assert asyncio.run(c.ssh_check("tower"))["self"] is True
+    s.connectors["ssh"]["include_self"] = False
+    config.save(s)
+    with pytest.raises(PermissionError):
+        Ssh()._argv("local", "x")
+
+
+def test_ssh_run_on_self_still_needs_approval(home, monkeypatch):
+    import asyncio
+    from pmjc import executor, registry
+    from pmjc.auth import Caller
+    registry.reload()
+    c = Caller("remote:laptop", "remote", {"sources", "actions"})
+    r = asyncio.run(executor.call_tool(c, "ssh_run", {"machine": "local", "command": "echo hi"}))
+    assert r["status"] == "pending_approval"

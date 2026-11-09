@@ -6,6 +6,7 @@ import fnmatch
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -198,14 +199,33 @@ class Ssh(Connector):
           builder:  {alias: builder}          # an existing Host alias from ~/.ssh/config
     If `machines` isn't set, every Host alias in ~/.ssh/config is available (set `use_ssh_config: false` to stop that).
     Login is always non-interactive (BatchMode): keys or an agent, never passwords.
+
+    The machine pmjc runs on is always reachable too ("self" route, no SSH): it is listed under this computer's
+    hostname (lowercase) plus `local`, and any configured machine whose name is the hostname or is listed in
+    `self_names` runs locally instead of over SSH (an SSH alias for the pmjc host usually can't reach itself).
+    Commands run in `self_shell` (default: cmd on Windows, like Windows OpenSSH's default shell, so a command works
+    the same whether pmjc runs on that machine or reaches it over SSH; sh elsewhere). Same approval as ssh_run.
+    Set `include_self: false` to turn it off.
     """
     id = "ssh"
-    limitations = 'Only machines configured in pmjc (ssh_machines); every command needs approval. No interactive sessions.'
+    limitations = 'Only machines in ssh_machines (configured ones plus the pmjc host itself, which runs commands locally); every command needs approval. No interactive sessions.'
     native_alternatives = "your client's shell if it runs on that machine."
     name = "Remote machines (SSH)"
     description = ("Check and run commands on other machines over SSH: any host you configure (address, user, port, key, "
                    "jump host or proxy command) or Host aliases from ~/.ssh/config. Running commands needs approval.")
     docs_url = "https://man.openbsd.org/ssh_config"
+
+    def _self_names(self) -> set[str]:
+        """Names that mean the pmjc host itself (lowercase)."""
+        if self.option("include_self", True) is False:
+            return set()
+        return {socket.gethostname().lower(), "local"} | {str(n).lower() for n in (self.option("self_names") or [])}
+
+    def _self_shell(self) -> str:
+        s = str(self.option("self_shell", "auto") or "auto").lower()
+        if s not in ("auto", "cmd", "powershell", "sh"):
+            s = "auto"
+        return ("cmd" if sys.platform == "win32" else "sh") if s == "auto" else s
 
     def _machines(self) -> dict[str, dict]:
         out: dict[str, dict] = {}
@@ -213,16 +233,44 @@ class Ssh(Connector):
             out = {a: {"alias": a} for a in ssh_aliases()}
         for name, m in (self.option("machines") or {}).items():
             out[name] = m if isinstance(m, dict) else {"alias": str(m)}
+        selfs = self._self_names()
+        for name in list(out):
+            if name.lower() in selfs:
+                out[name] = {"self": True}
+        if selfs:
+            host = socket.gethostname().lower()
+            if not any(n.lower() == host for n in out):
+                out[host] = {"self": True}
         return out
 
+    def _resolve(self, name: str) -> tuple[str, dict]:
+        machines = self._machines()
+        if name in machines:
+            return name, machines[name]
+        lower = {n.lower(): n for n in machines}
+        if name.lower() in lower:
+            return lower[name.lower()], machines[lower[name.lower()]]
+        if name.lower() in self._self_names():
+            return name, {"self": True}
+        raise PermissionError(f"{name} isn't a configured machine: {sorted(machines)}")
+
     def configured(self) -> bool:
-        return bool(shutil.which("ssh")) and bool(self._machines())
+        m = self._machines()
+        return any(v.get("self") for v in m.values()) or (bool(shutil.which("ssh")) and bool(m))
+
+    def _self_argv(self, command: str) -> list[str]:
+        shell = self._self_shell()
+        if shell == "powershell":
+            return [shutil.which("powershell") or shutil.which("pwsh") or "powershell", "-NoProfile", "-NonInteractive",
+                    "-Command", command]
+        if shell == "cmd":
+            return [shutil.which("cmd") or "cmd", "/d", "/s", "/c", command]
+        return [shutil.which("sh") or "/bin/sh", "-c", command]
 
     def _argv(self, name: str, command: str) -> list[str]:
-        machines = self._machines()
-        if name not in machines:
-            raise PermissionError(f"{name} isn't a configured machine: {sorted(machines)}")
-        m = machines[name]
+        name, m = self._resolve(name)
+        if m.get("self"):
+            return self._self_argv(command)
         argv = ["ssh", "-n", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20"]
         if m.get("alias"):
             if not HOST_NAME.match(str(m["alias"])):
@@ -251,9 +299,16 @@ class Ssh(Connector):
     @tool(scope="read")
     async def ssh_machines(self) -> list[dict]:
         """Machines pmjc can reach, with how each is addressed (no keys or secrets)."""
-        return [{"name": n, **({"alias": m["alias"]} if m.get("alias") else
-                               {"host": m.get("host"), "user": m.get("user"), "port": m.get("port", 22)})}
-                for n, m in self._machines().items()]
+        out = []
+        for n, m in self._machines().items():
+            if m.get("self"):
+                out.append({"name": n, "self": True, "shell": self._self_shell(),
+                            "note": "the machine pmjc runs on: commands run locally, no SSH"})
+            elif m.get("alias"):
+                out.append({"name": n, "alias": m["alias"]})
+            else:
+                out.append({"name": n, "host": m.get("host"), "user": m.get("user"), "port": m.get("port", 22)})
+        return out
 
     async def _ssh(self, name: str, command: str, timeout: int) -> dict:
         r = await asyncio.to_thread(_run, self._argv(name, command), timeout)
@@ -262,13 +317,24 @@ class Ssh(Connector):
     @tool(scope="read")
     async def ssh_check(self, machine: str) -> dict:
         """Is the machine reachable? Returns its hostname and uptime (runs no other command). machine is a name from ssh_machines."""
+        if self._resolve(machine)[1].get("self"):
+            up = None
+            try:
+                import psutil  # optional
+                up = round((time.time() - psutil.boot_time()) / 3600, 1)
+            except Exception:
+                pass
+            out = socket.gethostname() + "\n" + (f"up {up} h\n" if up is not None else "")
+            return {"exit_code": 0, "stdout": out,
+                    "stderr": "", "self": True}
         cmd = ("hostname && (uptime 2>/dev/null || powershell -NoProfile -Command "
                "\"[math]::Round(((Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime).TotalHours, 1)\")")
         return await self._ssh(machine, cmd, 40)
 
     @tool(scope="act")
     async def ssh_run(self, machine: str, command: str, timeout_seconds: int = 120) -> dict:
-        """Run a shell command on a machine over SSH. Needs approval. machine is a name from ssh_machines."""
+        """Run a shell command on a machine over SSH, or locally when the machine is the one pmjc runs on (ssh_machines
+        marks it `self` and names its shell). Needs approval. machine is a name from ssh_machines."""
         return await self._ssh(machine, command, min(max(timeout_seconds, 5), 1800))
 
 
