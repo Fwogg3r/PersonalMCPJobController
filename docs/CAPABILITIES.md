@@ -144,7 +144,7 @@ Pick the **most native route**: your client's own abilities first (if it can act
 
 - **pmjc:** ssh_run (other machines over SSH, and the machine pmjc runs on, locally: see ssh_machines), the user's command tools (kind: command YAML)
 - **Needs:** ssh
-- **Limits:** Needs approval; only configured machines and commands.
+- **Limits:** Needs approval; only configured machines and commands. Returns within about 8 s: a longer command returns status running with a run_id and keeps going; follow up with command_status(run_id).
 - **Better if your client can:** Your client's shell if it has one.
 - **Workaround:** Last resort when no tool fits (e.g. editing a file): pmjc_shell_run proposes one short shell command for the pmjc host. It always needs the owner's approval, is refused after reading third-party content and for callers config doesn't allow, and its output is untrusted.
 

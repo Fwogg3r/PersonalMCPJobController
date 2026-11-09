@@ -103,12 +103,17 @@ def _route(res: Any, tid: str | None) -> None:
         memory.reply_route_set(str(res["reply_route"]), tid)
 
 
-async def _invoke(fn, args: dict, caller: Caller | None = None) -> Any:
+async def _invoke(fn, args: dict, caller: Caller | None = None, owner: str | None = None) -> Any:
+    from . import commands
     if "_caller" in inspect.signature(fn).parameters:
         args = {**args, "_caller": caller}
-    res = fn(**args)
-    if inspect.isawaitable(res):
-        res = await res
+    token = commands.current_owner.set(owner if owner is not None else (caller.name if caller else ""))
+    try:
+        res = fn(**args)
+        if inspect.isawaitable(res):
+            res = await res
+    finally:
+        commands.current_owner.reset(token)
     return res
 
 
@@ -267,13 +272,14 @@ async def _decide(aid: str, approve: bool, decided_by: str) -> dict:
         if a["tool"] == route_choice.TOOL:  # internal: records the owner's routing choice, runs nothing else
             res = route_choice.decided(a, args)
         else:
-            res = await _invoke(t.fn, args, _approved_caller(a, t))
+            res = await _invoke(t.fn, args, _approved_caller(a, t), owner=a["requested_by"])
         out = json.dumps(res, default=str)[:20000]
         db.x("UPDATE approvals SET status='done', result=? WHERE id=?", out, aid)
         db.audit(decided_by, a["tool"], a["payload_hash"], "approved_ok", aid)
         if a["tool"] == shell.TOOL and isinstance(res, dict):
             db.audit(decided_by, a["tool"], a["payload_hash"], "shell_result",
-                     f"{aid}: exit {res.get('exit_code')} timed_out={res.get('timed_out')} truncated={res.get('truncated')}")
+                     f"{aid}: exit {res.get('exit_code')} timed_out={res.get('timed_out')} truncated={res.get('truncated')}"
+                     + (f" running run_id={res.get('run_id')}" if res.get("status") == "running" else ""))
         _thread_log(a.get("thread_id"), f"{a['tool']} was approved by the user and ran (approval {aid})")
         memory.act_record(a.get("thread_id"), a["tool"], a["payload_hash"], aid)
         _route(res, a.get("thread_id"))

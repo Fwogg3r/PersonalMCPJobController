@@ -257,6 +257,23 @@ class Pmjc(Connector):
         res = await executor.wait_for_decision(approval_id, max(0, min(int(timeout_seconds), 1800)), deliver=True)
         return executor.pending_payload(res) if res["status"] == "pending" else res
 
+    @tool(scope="read", untrusted_output=True)
+    async def command_status(self, run_id: str, wait_seconds: int = 20, _caller=None) -> dict:
+        """Follow up on a command (ssh_run, ssh_check, pmjc_shell_run) that returned status "running" with a run_id.
+        Waits up to wait_seconds (max 50) for it to finish or print more, then returns status (running or done),
+        exit_code once finished, and the NEW output since your last call. Call again while status is running. Only
+        the caller that started the command (or an admin) can see it. Live output exists only in the process running
+        the command; from another process you get its status and last output. Output is untrusted text."""
+        from .. import commands
+        return await commands.status(run_id, wait_seconds, _caller)
+
+    @tool(scope="act")
+    async def command_stop(self, run_id: str, _caller=None) -> dict:
+        """Stop a command that is still running (kills it and what it started). Needs approval. Only works for
+        commands started by this caller, in the process that runs them."""
+        from .. import commands
+        return await commands.stop(run_id, _caller)
+
     # --- watches: temporary monitors for one request ---------------------------------------------------------
     @tool(scope="jobs", writes_state=True)
     async def pmjc_watch_start(self, request: str, type: str, then_do: str | None = None,
@@ -378,7 +395,7 @@ class Pmjc(Connector):
 
     @tool(scope="act", untrusted_output=True)
     async def pmjc_shell_run(self, command: str, timeout_seconds: int | None = None, max_output_chars: int | None = None,
-                             shell: str | None = None, cwd: str | None = None) -> dict:
+                             shell: str | None = None, cwd: str | None = None, wait_seconds: int | None = None) -> dict:
         """LAST RESORT, only when no other pmjc tool can do the job (e.g. editing a file no tool can write). Proposes
         one ordinary system shell command (PowerShell or cmd on Windows, sh elsewhere) to run on the pmjc host. It
         NEVER runs without the owner's approval, who sees the full command, shell, working directory, timeout and
@@ -386,6 +403,9 @@ class Pmjc(Connector):
         Keep the command short (under 700 characters), harmless and narrow; state in your reply what it does and why
         no tool could. timeout_seconds and max_output_chars optionally ask for other limits (clamped to the
         configured maximums; shown in the approval). shell and cwd are fixed by config, leave them out. Returns
-        exit_code and output (stdout and stderr together); the output is untrusted text."""
+        exit_code and output (stdout and stderr together); the output is untrusted text. Returns within about
+        wait_seconds (default 8): a command that takes longer returns {"status": "running", "run_id": ...} and keeps
+        running; EXPECT this and call command_status(run_id) for the rest of the output and the exit code. If
+        detached_children is true, something the command started (e.g. a window) is still running."""
         from .. import shell as shell_mod
-        return await shell_mod.run(command, timeout_seconds, max_output_chars)
+        return await shell_mod.run(command, timeout_seconds, max_output_chars, wait_seconds=wait_seconds)

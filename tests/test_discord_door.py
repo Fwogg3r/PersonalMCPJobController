@@ -138,6 +138,7 @@ async def test_act_tool_posts_buttons_and_only_owner_can_approve(door):
     assert db.q("SELECT status FROM approvals WHERE id=?", aid)[0]["status"] == "pending"
     assert door.api.calls[-1][2]["data"]["flags"] == 64  # ephemeral refusal
     await door.on_interaction({**inter, "member": {"user": {"id": OWNER}}})
+    await door.drain()
     assert db.q("SELECT status FROM approvals WHERE id=?", aid)[0]["status"] == "done"
     method, path, body = door.api.calls[-1]
     assert method == "PATCH" and path == "/webhooks/999/tok/messages/@original"
@@ -381,7 +382,7 @@ async def test_approval_result_continues_the_conversation(door):
              "member": {"user": {"id": OWNER}}}
     before = len(door.prompts)
     await door.on_interaction(inter)
-    await asyncio.gather(*list(door._tasks))
+    await door.drain()
     assert len(door.prompts) == before + 1
     assert "[approval result]" in door.prompts[-1] and "fake_send" in door.prompts[-1]
 
@@ -421,3 +422,82 @@ async def test_answer_carries_routing_footer(door):
     s = config.load(); s.router.footer = False; config.save(s)
     await door.on_message(msg("again", channel="thr1"))
     assert routing.FOOTER_MARK not in door.api.sent("thr1")[-1][1]["content"]
+
+
+async def _slow_approval(door, monkeypatch, delay=0.6):
+    """An approval for fake_send whose tool takes `delay` seconds; returns (interaction template, aid, run counter)."""
+    import asyncio
+    from pmjc import registry
+    Fake = type(registry.get().connectors["fake"])
+    runs = []
+    orig = Fake.fake_send
+
+    async def slow(self, to):
+        runs.append(1)
+        await asyncio.sleep(delay)
+        return {"sent": to}
+    slow.__pmjc_tool__ = orig.__pmjc_tool__
+    monkeypatch.setattr(Fake, "fake_send", slow)
+    await door.on_message(msg("please send it", channel="dm1", guild=None))
+    with_buttons = [b for _, b in door.api.sent("dm1") if b.get("components")]
+    cid = with_buttons[0]["components"][0]["components"][0]["custom_id"]
+    inter = {"id": "i9", "token": "tok", "type": 3, "application_id": "999", "data": {"custom_id": cid},
+             "message": {"id": "m77", "content": with_buttons[0]["content"]}, "channel_id": "dm1",
+             "member": {"user": {"id": OWNER}}}
+    return inter, cid.split(":")[-1], runs
+
+
+async def test_approve_click_is_answered_before_the_tool_finishes_then_message_edited(door, monkeypatch):
+    from pmjc import db
+    inter, aid, runs = await _slow_approval(door, monkeypatch)
+    await door.on_interaction(inter)
+    # the interaction response (type 7, buttons removed) is out while the tool is still running
+    cb = [c for c in door.api.calls if c[1].endswith("/callback")]
+    assert cb and cb[-1][2]["type"] == 7 and cb[-1][2]["data"]["components"] == []
+    assert "running" in cb[-1][2]["data"]["content"]
+    assert db.q("SELECT status FROM approvals WHERE id=?", aid)[0]["status"] in ("pending", "running")
+    assert not [c for c in door.api.calls if c[0] == "PATCH"]
+    await door.drain()
+    method, path, body = [c for c in door.api.calls if c[0] == "PATCH"][-1]
+    assert path == "/webhooks/999/tok/messages/@original"
+    assert "**done**" in body["content"] and body["components"] == []
+    assert db.q("SELECT status FROM approvals WHERE id=?", aid)[0]["status"] == "done"
+
+
+async def test_double_click_runs_the_tool_once(door, monkeypatch):
+    inter, aid, runs = await _slow_approval(door, monkeypatch)
+    await door.on_interaction(inter)
+    await door.on_interaction({**inter, "id": "i10"})  # second click while it is running
+    second = [c for c in door.api.calls if c[1].startswith("/interactions/i10/")][-1]
+    assert second[2]["type"] == 4 and second[2]["data"]["flags"] == 64 and "running" in second[2]["data"]["content"].lower()
+    await door.drain()
+    await door.on_interaction({**inter, "id": "i11"})  # and after it finished
+    third = [c for c in door.api.calls if c[1].startswith("/interactions/i11/")][-1]
+    assert third[2]["data"]["flags"] == 64 and "done" in third[2]["data"]["content"].lower()
+    assert len(runs) == 1
+
+
+async def test_deny_click_acks_then_edits_and_never_runs(door, monkeypatch):
+    from pmjc import db
+    inter, aid, runs = await _slow_approval(door, monkeypatch)
+    deny = {**inter, "data": {"custom_id": inter["data"]["custom_id"].replace(":a:", ":d:")}}
+    await door.on_interaction(deny)
+    cb = [c for c in door.api.calls if c[1].endswith("/callback")][-1]
+    assert cb[2]["type"] == 7 and "Denied" in cb[2]["data"]["content"]
+    await door.drain()
+    assert runs == [] and db.q("SELECT status FROM approvals WHERE id=?", aid)[0]["status"] == "denied"
+    assert "**denied**" in [c for c in door.api.calls if c[0] == "PATCH"][-1][2]["content"]
+
+
+async def test_expired_interaction_token_falls_back_to_channel_edit(door, monkeypatch):
+    inter, aid, runs = await _slow_approval(door, monkeypatch, delay=0)
+    orig = door.api
+
+    async def api(method, path, body):
+        if method == "PATCH" and "/webhooks/" in path:
+            raise RuntimeError("Unknown Webhook")
+        return await orig(method, path, body)
+    door.api = api
+    await door.on_interaction(inter)
+    await door.drain()
+    assert [c for c in orig.calls if c[0] == "PATCH" and c[1] == "/channels/dm1/messages/m77"]

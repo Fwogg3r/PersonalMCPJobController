@@ -9,12 +9,9 @@ Rules, all enforced outside the model's control:
 """
 from __future__ import annotations
 
-import asyncio
 import os
 import shutil
-import subprocess
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -103,48 +100,28 @@ def _argv(shell: str, command: str) -> list[str]:
 
 
 async def run(command: str, timeout_seconds: int | None = None, max_output_chars: int | None = None,
-              shell: str | None = None, cwd: str | None = None) -> dict:
+              shell: str | None = None, cwd: str | None = None, wait_seconds: int | None = None) -> dict:
     """Run an approved command. Re-clamps the limits (hard maximums) and always uses the configured shell and
     working directory (`shell` and `cwd` arguments are accepted only so stored approvals round-trip; ignored).
-    stdout and stderr come back together."""
+    stdout and stderr come back together. Returns the finished result within wait_seconds (default config
+    commands.wait_seconds), else {"status": "running", "run_id": ...} (see pmjc.commands)."""
+    from . import commands
     a = normalize({"command": command, "timeout_seconds": timeout_seconds, "max_output_chars": max_output_chars})
     shell, cwd = a["shell"], a["cwd"]
     timeout, cap = a["timeout_seconds"], a["max_output_chars"]
-    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-    t0 = time.time()
+
+    def finish(run: commands.Run) -> dict:
+        text = run.text("out")
+        out = {"exit_code": run.exit_code, "output": text[:cap], "truncated": run.capped or len(text) > cap,
+               "timed_out": run.timed_out, "seconds": run.seconds(), "shell": shell, "cwd": cwd,
+               "timeout_seconds": timeout, "max_output_chars": cap}
+        if run.detached:
+            out["detached_children"] = True
+            out["note"] = "something the command started is still running and holds its output; it was not waited for"
+        return out
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *_argv(shell, command), cwd=cwd, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT, creationflags=flags)
+        return await commands.execute(tool=TOOL, machine="pmjc host", argv=_argv(shell, command), command=command,
+                                      timeout=timeout, wait_seconds=wait_seconds, finish=finish, cwd=cwd, merge=True,
+                                      head_cap_bytes=cap * 4 + 4)
     except OSError as e:
         return {"error": f"could not start: {e}", "shell": shell, "cwd": cwd}
-    buf = bytearray()
-    capped = False
-    byte_cap = cap * 4 + 4  # a char is at most 4 bytes; trimmed by chars below
-
-    async def pump() -> None:
-        nonlocal capped
-        while True:
-            chunk = await proc.stdout.read(4096)
-            if not chunk:
-                return
-            buf.extend(chunk)
-            if len(buf) > byte_cap:
-                capped = True
-                proc.kill()
-                return
-
-    timed_out = False
-    try:
-        await asyncio.wait_for(pump(), timeout)
-    except asyncio.TimeoutError:
-        timed_out = True
-        proc.kill()
-    try:
-        await asyncio.wait_for(proc.wait(), 5)
-    except asyncio.TimeoutError:
-        pass
-    text = buf.decode("utf-8", errors="replace")
-    return {"exit_code": proc.returncode, "output": text[:cap], "truncated": capped or len(text) > cap,
-            "timed_out": timed_out, "seconds": round(time.time() - t0, 2), "shell": shell, "cwd": cwd,
-            "timeout_seconds": timeout, "max_output_chars": cap}

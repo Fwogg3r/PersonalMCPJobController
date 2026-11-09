@@ -205,6 +205,11 @@ class RouterConfig(BaseModel):
     footer_surfaces: list[str] = Field(default_factory=lambda: ["discord", "v1"])
 
 
+class CommandsConfig(BaseModel):
+    """How ssh_run, ssh_check and pmjc_shell_run return (see pmjc.commands)."""
+    wait_seconds: int = 8  # a command still running after this many seconds returns a run_id; follow up with command_status
+
+
 class Settings(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8770
@@ -250,6 +255,7 @@ class Settings(BaseModel):
     research: ResearchConfig = Field(default_factory=ResearchConfig)
 
     router: RouterConfig = Field(default_factory=RouterConfig)
+    commands: CommandsConfig = Field(default_factory=CommandsConfig)
 
 
 _lock = threading.Lock()

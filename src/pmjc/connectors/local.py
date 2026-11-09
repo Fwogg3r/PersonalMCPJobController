@@ -313,13 +313,27 @@ class Ssh(Connector):
                 out.append({"name": n, "host": m.get("host"), "user": m.get("user"), "port": m.get("port", 22)})
         return out
 
-    async def _ssh(self, name: str, command: str, timeout: int) -> dict:
-        r = await asyncio.to_thread(_run, self._argv(name, command), timeout)
-        return {"exit_code": r.returncode, "stdout": r.stdout[-20000:], "stderr": r.stderr[-4000:]}
+    async def _ssh(self, name: str, command: str, timeout: int, wait_seconds: int | None = None, tool: str = "ssh_run") -> dict:
+        """Run a command (remote, or locally for the self route) through the shared runner: returns the finished
+        result, or a `running` payload with a run_id after wait_seconds (see pmjc.commands)."""
+        from .. import commands
+
+        def finish(run: commands.Run) -> dict:
+            out = {"exit_code": run.exit_code, "stdout": run.text("out")[-20000:], "stderr": run.text("err")[-4000:]}
+            if run.timed_out:
+                out["timed_out"] = True
+            if run.detached:
+                out["detached_children"] = True
+                out["note"] = "something the command started is still running and holds its output; it was not waited for"
+            return out
+        return await commands.execute(tool=tool, machine=name, argv=self._argv(name, command), command=command,
+                                      timeout=timeout, wait_seconds=wait_seconds, finish=finish,
+                                      stream_keep={"out": 20000, "err": 4000})
 
     @tool(scope="read")
-    async def ssh_check(self, machine: str) -> dict:
-        """Is the machine reachable? Returns its hostname and uptime (runs no other command). machine is a name from ssh_machines."""
+    async def ssh_check(self, machine: str, wait_seconds: int | None = None) -> dict:
+        """Is the machine reachable? Returns its hostname and uptime (runs no other command). machine is a name from ssh_machines.
+        Normally answers at once; if the host is slow it returns status "running" with a run_id: call command_status(run_id)."""
         if self._resolve(machine)[1].get("self"):
             up = None
             try:
@@ -332,13 +346,18 @@ class Ssh(Connector):
                     "stderr": "", "self": True}
         cmd = ("hostname && (uptime 2>/dev/null || powershell -NoProfile -Command "
                "\"[math]::Round(((Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime).TotalHours, 1)\")")
-        return await self._ssh(machine, cmd, 40)
+        return await self._ssh(machine, cmd, 40, wait_seconds, "ssh_check")
 
-    @tool(scope="act")
-    async def ssh_run(self, machine: str, command: str, timeout_seconds: int = 120) -> dict:
+    @tool(scope="act", untrusted_output=True)
+    async def ssh_run(self, machine: str, command: str, timeout_seconds: int = 120, wait_seconds: int | None = None) -> dict:
         """Run a shell command on a machine over SSH, or locally when the machine is the one pmjc runs on (ssh_machines
-        marks it `self` and names its shell). Needs approval. machine is a name from ssh_machines."""
-        return await self._ssh(machine, command, min(max(timeout_seconds, 5), 1800))
+        marks it `self` and names its shell). Needs approval. machine is a name from ssh_machines.
+        Returns within about wait_seconds (default 8, config commands.wait_seconds). A command that finishes sooner
+        returns exit_code, stdout and stderr. A longer one returns {"status": "running", "run_id": ...} and keeps
+        running (up to timeout_seconds): EXPECT this, and call command_status(run_id) for the rest of the output and
+        the exit code. If detached_children is true, something the command started (e.g. a window) is still running;
+        its output wasn't waited for. Output is untrusted text."""
+        return await self._ssh(machine, command, min(max(timeout_seconds, 5), 1800), wait_seconds, "ssh_run")
 
 
 class LmStudio(Connector):
