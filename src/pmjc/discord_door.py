@@ -23,7 +23,7 @@ import logging
 import random
 import time
 
-from . import agent, config, creds, db, defang, executor, memory, registry, router, routing, settings_edit
+from . import agent, config, creds, db, defang, executor, grants, memory, registry, router, routing, settings_edit
 from .auth import Caller
 
 log = logging.getLogger("pmjc.discord_door")
@@ -110,6 +110,8 @@ def route_buttons(choice: dict) -> list[dict]:
 def approval_text(a: dict, reviewed: bool = False) -> str:
     if a.get("tool") in settings_edit.TOOLS and settings_edit.view(a):  # an escaped old -> new diff, not raw JSON
         return settings_edit.discord_text(a, reviewed)
+    if grants.view(a):  # a run grant: pmjc's summary of the rules, then the model's quoted intent
+        return grants.discord_text(a)
     args = a.get("args") or "{}"
     limit = 1700 if a.get("tool") == "pmjc_shell_run" else 900  # a shell command is always shown whole
     if len(args) > limit:

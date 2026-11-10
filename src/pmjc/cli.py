@@ -24,9 +24,11 @@ ssh_app = typer.Typer(help="Machines pmjc can reach over SSH.")
 appr_app = typer.Typer(help="Actions waiting for approval.")
 door_app = typer.Typer(help="Discord front door: chat with pmjc through your bot.")
 tools_app = typer.Typer(help="Inspect the tools offered to models.")
+grants_app = typer.Typer(help="Run grants: one approval for a batch of matching actions.")
 for name, sub in [("token", token_app), ("auth", auth_app), ("jobs", jobs_app), ("notifications", notif_app),
                   ("service", svc_app), ("browser", browser_app), ("ssh", ssh_app), ("approvals", appr_app),
-                  ("discord-door", door_app), ("tools", tools_app)]:
+                  ("discord-door", door_app), ("tools", tools_app),
+                  ("grants", grants_app)]:
     app.add_typer(sub, name=name)
 
 
@@ -128,7 +130,27 @@ def token_revoke(token_id: Optional[str] = typer.Argument(None), all: bool = typ
     from . import auth
     if not token_id and not all:
         raise typer.BadParameter("give a token id or --all")
-    _out({"revoked": auth.revoke(None if all else token_id)})
+    out = {"revoked": auth.revoke(None if all else token_id)}
+    if all:  # the kill switch also ends every run grant
+        from . import grants
+        out["grants_revoked"] = grants.revoke(None)
+    _out(out)
+
+
+@grants_app.command("list")
+def grants_list(all: bool = typer.Option(False, "--all", help="Include denied, expired and revoked grants.")):
+    """Standing grants (settings.yaml) and session grants waiting for approval or active."""
+    from . import grants
+    _out(grants.list_grants("all" if all else None))
+
+
+@grants_app.command("revoke")
+def grants_revoke(grant_id: Optional[str] = typer.Argument(None), all: bool = typer.Option(False, "--all")):
+    """Revoke one session grant, or --all. Standing grants are removed from settings.yaml."""
+    from . import grants
+    if not grant_id and not all:
+        raise typer.BadParameter("give a grant id or --all")
+    _out({"revoked": grants.revoke(None if all else grant_id)})
 
 
 # --- credentials ----------------------------------------------------------------------------------------

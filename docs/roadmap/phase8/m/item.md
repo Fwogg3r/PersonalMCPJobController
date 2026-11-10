@@ -1,6 +1,8 @@
 ---
 title: "Run grants: one approval for a batch of calls (rules, templates, run state, standing grants)"
-status: planned
+status: done
 links: [phase8/l, phase8/c]
 ---
 pmjc_grant_request(intent, rules, minutes, max_calls): one approval covers matching calls. Closed rules (eq/in/range) vs open (re/any); command tools use templates with typed slots, no regex on shell strings. Run state clean/derived/untrusted; open grants cover clean runs only. Grant check only inside the act block (egress, writes_state and act-ledger guards unchanged). Standing grants in config, job-spec rules, revocation in dashboard, Discord and CLI. Design and review: DECISIONS.md "Run grants and permission levels", docs/reviews/2026-11-10-run-grants.md.
+
+Outcome (2026-11-10): built. src/pmjc/grants.py (rules, templates, validation, summary/views, storage, standing grants, matching), `pmjc_grant_request` (read scope; files one approval for the internal `pmjc_grant`), executor hook inside the act block only (egress and writes_state guards untouched; act-ledger repeats need a single-valued rule), `Caller.session_key` and `Caller.derived` (set after `pmjc_research`), approval views (dashboard API, signed page, Discord, notifications), `pmjc grants list|revoke`, `/api/grants`, kill switch revokes grants, MCP server instructions. Template slots also refuse a leading `-` (option injection). Started by an Opus API agent that stopped when the API credit ran out; finished and reviewed in the main session. 10 new tests in tests/test_grants.py. Deferred to phase8/n: dashboard and Discord grant lists, tightening a grant before approving.

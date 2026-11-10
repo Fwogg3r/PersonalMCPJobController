@@ -12,7 +12,7 @@ from fastmcp.server.auth import AccessToken, TokenVerifier
 from fastmcp.exceptions import ToolError
 from fastmcp.tools import Tool
 
-from . import auth, config, executor, memory, registry
+from . import auth, config, executor, grants, memory, registry
 from .auth import Caller
 
 log = logging.getLogger("pmjc.mcp")
@@ -28,7 +28,9 @@ work, resume that thread with pmjc_thread_get. Prefer your own client's native r
 user would do themselves; pmjc_capabilities(task) lists pmjc's limits and workarounds.
 Request flow: check pmjc_connectors; answer now from instant tools when you can; only if the answer needs waiting,
 start ONE temporary watch with pmjc_watch_start (time, event or poll). It answers the request when it fires, sends
-the answer to the user, and ends by itself. Use pmjc_job_create only for recurring work the user asked for."""
+the answer to the user, and ends by itself. Use pmjc_job_create only for recurring work the user asked for.
+For multi-step work with several actions, call pmjc_grant_request once first with the narrowest rules (templates for
+commands); the user approves the batch once, and calls outside the grant still ask as usual."""
 
 _stdio_caller: Caller | None = None
 _session_callers: dict[tuple[str, str], Caller] = {}
@@ -165,13 +167,18 @@ def _is_run_token(stdio: bool) -> bool:
     return bool(tok and tok.token.startswith("pmjc_run_"))
 
 
+def _waits(t: registry.ToolSpec) -> bool:
+    """Act tools and the run-grant request return pending_approval; an MCP client's call waits for the decision."""
+    return t.scope == "act" or t.name == grants.REQUEST_TOOL
+
+
 def _wrap(t: registry.ToolSpec, stdio: bool) -> Tool:
     if t.schema is not None:
         async def call(**kwargs: Any) -> Any:
             try:
                 caller = _current_caller(stdio)
                 res = await executor.call_tool(caller, t.name, kwargs)
-                if t.scope == "act" and is_mcp_client(caller, _is_run_token(stdio)):
+                if _waits(t) and is_mcp_client(caller, _is_run_token(stdio)):
                     res = await settle_pending(res)  # mounted act tools wait for the owner's decision too
                 return with_first_call_header(res, _session_key(stdio), t.name)
             except (executor.Denied, PermissionError) as e:
@@ -187,7 +194,7 @@ def _wrap(t: registry.ToolSpec, stdio: bool) -> Tool:
         try:
             caller = _current_caller(stdio)
             res = await executor.call_tool(caller, t.name, kwargs)
-            if t.scope == "act" and is_mcp_client(caller, _is_run_token(stdio)):
+            if _waits(t) and is_mcp_client(caller, _is_run_token(stdio)):
                 res = await settle_pending(res)
             return with_first_call_header(res, _session_key(stdio), t.name)
         except (executor.Denied, PermissionError) as e:

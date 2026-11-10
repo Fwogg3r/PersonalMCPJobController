@@ -257,6 +257,25 @@ class Pmjc(Connector):
         res = await executor.wait_for_decision(approval_id, max(0, min(int(timeout_seconds), 1800)), deliver=True)
         return executor.pending_payload(res) if res["status"] == "pending" else res
 
+    @tool(scope="read", private_output=False)
+    async def pmjc_grant_request(self, intent: str, rules: list[dict], minutes: int = 30, max_calls: int = 50,
+                                 cover_tainted: bool = False, _caller=None) -> dict:
+        """Ask the user ONCE for a run grant before a task that needs several actions (act tools): matching calls then
+        run without a separate approval each. Request the narrowest rules, then make the calls; calls outside the
+        grant still need normal approval. Waits for the decision like an action does (else pmjc_approval_wait).
+        rules: [{"tool": name, "args": {arg: constraint}}], at most 20. Constraints: {"eq": v}, {"in": [v, ...]},
+        {"range": [lo, hi]}, {"template": "systemctl status <word>"} (slots <word> <path> <int>; literal text exact),
+        {"re": "pattern"}, {"any": true}. Arguments a rule doesn't name must be left out or at their default. Command
+        arguments (command, script, cmd) take only eq, in or template. After reading outside content only eq, in,
+        range and template are allowed. minutes 1..240, max_calls 1..200. cover_tainted=true (all rules closed) asks
+        that the grant keep working after the run reads outside content. intent: one sentence on why, shown to the
+        user as your claim. Tools the user set to always ask (shell, settings, messages to people) are never covered."""
+        from .. import grants
+        try:
+            return await grants.request(_caller, intent, rules, minutes, max_calls, cover_tainted)
+        except grants.GrantError as e:
+            return {"status": "refused", "error": str(e)}
+
     @tool(scope="read", untrusted_output=True)
     async def command_status(self, run_id: str, wait_seconds: int = 20, _caller=None) -> dict:
         """Follow up on a command (ssh_run, ssh_check, pmjc_shell_run) that returned status "running" with a run_id.

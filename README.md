@@ -94,6 +94,16 @@ The **Settings** tab also shows what's polling right now and lets you delete sto
     ha_call_service: always_ask
     browser_*: off             # hide and refuse these tools
   ```
+- **Run grants: approve a batch once.** Before multi-step work a model calls `pmjc_grant_request` with the calls it plans as rules; you approve once and matching calls run without asking (for up to `minutes`, at most `max_calls`). Commands are matched against templates such as `git -C <path> push origin <word>`, whose slots can't hold shell metacharacters or options. Grants with only fixed values or templates can keep working after the run read outside content (`cover_tainted`); anything looser stops then. Standing grants for routine commands go in settings.yaml:
+  ```yaml
+  grants:
+    - name: nas-health
+      cover: untrusted          # also after reading command output (closed rules only)
+      rules:
+        - {tool: ssh_run, args: {machine: {eq: nas}, command: {in: ["df -h", "uptime"]}}}
+        - {tool: ssh_run, args: {machine: {eq: nas}, command: {template: "systemctl status <word>"}}}
+  ```
+  List and revoke with `pmjc grants list` / `pmjc grants revoke <id>|--all`.
 - **The same over the API:** `POST /api/asks/automate`, `PUT /api/jobs/<name>/enabled`, `PUT /api/auto-approve`.
 
 ## Requests and watches

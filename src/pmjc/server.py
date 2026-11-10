@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from . import __version__, agent, auth, config, creds, db, discord_door, executor, jobs, levels, mcp_server, memory, registry, router, settings_edit
+from . import __version__, agent, auth, config, creds, db, discord_door, executor, grants, jobs, levels, mcp_server, memory, registry, router, settings_edit
 from .auth import Caller
 from .connector import Event
 
@@ -537,7 +537,7 @@ def create_app() -> FastAPI:
         rows = db.q("SELECT id,tool,args,requested_by,reason,status,created,expires,result FROM approvals "
                     "WHERE status=? OR ?='all' ORDER BY created DESC LIMIT 200", status, status)
         for r in rows:  # settings changes come with an escaped diff view (the dashboard shows it instead of raw JSON)
-            v = settings_edit.api_view(r)
+            v = settings_edit.api_view(r) or grants.api_view(r)
             if v:
                 r["view"] = v
         return rows
@@ -561,7 +561,11 @@ def create_app() -> FastAPI:
             return HTMLResponse("<p>Unknown request.</p>", 404)
         r = rows[0]
         view = settings_edit.view(r)
-        args = html.escape(json.dumps(json.loads(r["args"]), indent=2)) if view is None else settings_edit.html_view(r)
+        if view is None and grants.view(r):  # a run grant: the generated summary and the quoted intent, escaped
+            view = grants.view(r)
+            args = grants.html_view(r)
+        else:
+            args = html.escape(json.dumps(json.loads(r["args"]), indent=2)) if view is None else settings_edit.html_view(r)
         two_step = bool(view and view["two_step"]) and not deny
         if a["status"] != "pending":
             button = ""
@@ -609,13 +613,24 @@ def create_app() -> FastAPI:
     async def revoke_token(tid: str, _: Caller = Depends(admin_caller)):
         return {"revoked": auth.revoke(tid)}
 
+    # ---- run grants
+    @app.get("/api/grants", tags=["admin"])
+    async def grants_list(status: str | None = None, _: Caller = Depends(admin_caller)):
+        """Run grants: standing ones from settings.yaml, then session grants (pending and active; ?status=all)."""
+        return grants.list_grants(status)
+
+    @app.delete("/api/grants/{gid}", tags=["admin"])
+    async def grants_revoke(gid: str, _: Caller = Depends(admin_caller)):
+        return {"revoked": grants.revoke(gid)}
+
     @app.post("/api/kill", tags=["admin"])
     async def kill(_: Caller = Depends(admin_caller)):
-        """Kill switch: revoke every token (including this one) and pause the scheduler."""
+        """Kill switch: revoke every token (including this one) and every run grant, and pause the scheduler."""
         n = auth.revoke(None)
+        g = grants.revoke(None)
         engine.sched.pause()
-        db.audit("admin", "kill_switch", "", "ok", f"revoked {n}")
-        return {"revoked": n, "scheduler": "paused", "next": "create a new admin token with `pmjc token create --admin`"}
+        db.audit("admin", "kill_switch", "", "ok", f"revoked {n}, grants {g}")
+        return {"revoked": n, "grants_revoked": g, "scheduler": "paused", "next": "create a new admin token with `pmjc token create --admin`"}
 
     from . import openai_door
     openai_door.register(app, bearer, need)  # /v1/models, /v1/chat/completions (docs/FRONT_DOOR.md)

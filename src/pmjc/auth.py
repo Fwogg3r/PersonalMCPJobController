@@ -45,6 +45,9 @@ class Caller:
     on_delta: Callable | None = field(default=None, repr=False, compare=False)  # async (kind, text): streamed answer ("content") / thinking ("reasoning")
     surface: str = ""  # discord | rest | cli | v1 | job: where the request came from (front-door routing)
     tier_hint: str = ""  # a tier the caller chose explicitly (e.g. /v1 model "pmjc:strong")
+    derived: bool = False  # the run consumed a pmjc_research result (run state "derived", pmjc.grants); set by the executor
+    session_key: str = field(default_factory=lambda: secrets.token_hex(12), repr=False, compare=False)  # binds run grants
+    # to this object (it lives as long as the MCP session or the ask/job/watch run); never taken from a client
 
     def can(self, scope: str) -> bool:
         return "admin" in self.scopes or scope in self.scopes

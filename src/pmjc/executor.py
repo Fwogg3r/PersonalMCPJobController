@@ -15,7 +15,7 @@ import time
 from typing import Any
 from urllib.parse import urlparse, urlsplit
 
-from . import auth, config, db, defang, levels, memory, registry, results, route_choice, settings_edit, shell
+from . import auth, config, db, defang, grants, levels, memory, registry, results, route_choice, settings_edit, shell
 from .auth import Caller
 
 log = logging.getLogger("pmjc.executor")
@@ -178,14 +178,20 @@ async def _call_tool(caller: Caller, name: str, args: dict | None, reason: str) 
                      "start a fresh run or ask the user")
     if t.writes_state and caller.untrusted:  # laundering guard: a run that read third-party content can't write trusted state
         return await request_approval(caller, name, args, reason or "writes durable state after the run read untrusted content")
+    granted = None  # id of the run grant that covers this call (pmjc.grants)
     if t.scope == "act":
-        if memory.act_done(caller.thread_id, name, h):  # same act, same payload, same thread: the user decides again
-            return await request_approval(caller, name, args, "already done in this thread; approve only if it should repeat")
+        repeat = memory.act_done(caller.thread_id, name, h)  # same act, same payload, same thread: the user decides again
         hard = levels.hard_floor(name)  # shell and settings tools: always approved, even at the CLI
         auto = level == "auto_clean"  # never for a tainted run (below); levels.effective folds in the auto_approve lists
-        if caller.untrusted or hard or (caller.needs_approval and not auto):
-            why = reason or ("proposed by a run that read untrusted content" if caller.untrusted else "")
-            return await request_approval(caller, name, args, why)
+        needs = caller.untrusted or hard or (caller.needs_approval and not auto)
+        if (repeat or needs) and caller.needs_approval and not hard and level != "always_ask":
+            granted = _grant_for(caller, t, args, repeat)  # a repeat is covered only by a single-valued rule
+        if granted is None:
+            if repeat:
+                return await request_approval(caller, name, args, "already done in this thread; approve only if it should repeat")
+            if needs:
+                why = reason or ("proposed by a run that read untrusted content" if caller.untrusted else "")
+                return await request_approval(caller, name, args, why)
     try:
         res = await _invoke(t.fn, args, caller)
         if t.scope == "act":
@@ -197,11 +203,28 @@ async def _call_tool(caller: Caller, name: str, args: dict | None, reason: str) 
         _remember_urls(caller, args, res)  # before the taint below: URLs the model chose while still clean
         if t.untrusted_output:
             caller.untrusted = True  # taint is derived, not declared
-        db.audit(caller.name, name, h, "ok", run_flags(caller))
+        if name == grants.RESEARCH_TOOL:
+            caller.derived = True  # run state "derived": open grant rules stop covering this run
+        if granted:
+            db.audit(caller.name, name, h, "granted", granted)
+            _thread_log(caller.thread_id, f"{name} ran under run grant {granted}")
+        else:
+            db.audit(caller.name, name, h, "ok", run_flags(caller))
         return res
     except Exception as e:
         db.audit(caller.name, name, h, "error", type(e).__name__)
         raise
+
+
+def _grant_for(caller: Caller, t, args: dict, repeat: bool) -> str | None:
+    """Claim one call on a run grant that covers this call in the caller's current run state, else None."""
+    try:
+        for m in grants.find(caller, t, args, need_single=repeat):
+            if grants.claim(m):
+                return m.id
+    except Exception:  # a broken grant never lets a call through: it falls back to per-call approval
+        log.warning("grant check failed for %s", t.name, exc_info=True)
+    return None
 
 
 async def request_approval(caller: Caller, name: str, args: dict, reason: str = "") -> dict:
@@ -234,7 +257,9 @@ async def _announce(aid: str, name: str, args: dict, by: str, reason: str, taint
     if name in settings_edit.TOOLS:  # a settings diff, not raw JSON
         row = {"tool": name, "args": json.dumps(args, default=str), "reason": reason}
         preview = settings_edit.plain_text(row)
-    limit = 1700 if name == shell.TOOL else 600  # a shell command is always shown whole
+    if name == grants.TOOL:  # a run grant: the summary pmjc built from the rules, then the model's quoted intent
+        preview = grants.plain_text({"tool": name, "args": json.dumps(args, default=str)})
+    limit = 1700 if name in (shell.TOOL, grants.TOOL) else 600  # a shell command or grant is always shown whole
     if len(preview) > limit:
         preview = preview[:limit] + "..."
     msg = f"{by} wants to run {name}\n{reason}\n{preview}"
@@ -280,6 +305,8 @@ async def _decide(aid: str, approve: bool, decided_by: str) -> dict:
         return {"status": "already decided"}
     if not approve:
         db.x("UPDATE approvals SET status='denied' WHERE id=?", aid)
+        if a["tool"] == grants.TOOL:
+            grants.mark_denied(args)
         db.audit(decided_by, a["tool"], a["payload_hash"], "denied_by_user", aid)
         _thread_log(a.get("thread_id"), f"{a['tool']} was denied by the user (approval {aid})")
         return {"status": "denied"}
@@ -287,6 +314,8 @@ async def _decide(aid: str, approve: bool, decided_by: str) -> dict:
     try:
         if a["tool"] == route_choice.TOOL:  # internal: records the owner's routing choice, runs nothing else
             res = route_choice.decided(a, args)
+        elif a["tool"] == grants.TOOL:  # internal: activates the run grant the owner approved, runs nothing else
+            res = grants.activate(args)
         else:
             res = await _invoke(t.fn, args, _approved_caller(a, t), owner=a["requested_by"])
         out = json.dumps(res, default=str)[:20000]

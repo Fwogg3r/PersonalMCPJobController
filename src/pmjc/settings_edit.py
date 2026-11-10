@@ -58,7 +58,7 @@ class SettingsError(Exception):
 HARD_DENY_TOP = {
     "auto_approve", "tool_levels", "allowed_hosts", "host", "port", "public_url", "credential_backend", "oauth", "enabled_plugins",
     "mcp_servers", "connectors", "discord_door", "notify_channels", "monitoring_sources", "output_link_allowlist",
-    "audit_retention_days", "approval_ttl_seconds", "approval_poll_seconds", "profiles",
+    "audit_retention_days", "approval_ttl_seconds", "approval_poll_seconds", "profiles", "grants",
 }
 HARD_DENY_PREFIX = ("shell_command_",)
 HARD_DENY_EXACT = {

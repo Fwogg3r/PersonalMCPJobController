@@ -1,4 +1,4 @@
-"""SQLite state: events, job runs, approvals, client tokens, audit log, model spend, model calls."""
+"""SQLite state: events, job runs, approvals, run grants, client tokens, audit log, model spend, model calls."""
 from __future__ import annotations
 
 import json
@@ -35,6 +35,10 @@ CREATE INDEX IF NOT EXISTS completions_ts ON completions(ts);
 CREATE TABLE IF NOT EXISTS command_runs (
   run_id TEXT PRIMARY KEY, tool TEXT, machine TEXT, command TEXT, owner TEXT, started REAL, status TEXT,
   exit_code INTEGER, output_tail TEXT, finished REAL, detached INTEGER DEFAULT 0, timed_out INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS grants (
+  id TEXT PRIMARY KEY, session_key TEXT, caller_name TEXT, thread_id TEXT, rules TEXT, intent TEXT, summary TEXT,
+  cover TEXT, max_calls INTEGER, calls_used INTEGER DEFAULT 0, minutes INTEGER, expires REAL, status TEXT,
+  approval_id TEXT, created REAL, created_state TEXT, source TEXT DEFAULT 'session');
 """
 
 _local = threading.local()

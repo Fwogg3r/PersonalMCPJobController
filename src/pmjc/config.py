@@ -7,11 +7,11 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import yaml
 from platformdirs import user_data_dir
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, BeforeValidator, Field, model_validator
 
 
 def default_home() -> Path:
@@ -233,6 +233,22 @@ class CommandsConfig(BaseModel):
     wait_seconds: int = 8  # a command still running after this many seconds returns a run_id; follow up with command_status
 
 
+class StandingGrant(BaseModel):
+    """An owner-written run grant (pmjc.grants): same rules as a session grant, no expiry, no call cap. Checked when used;
+    an invalid one is logged and skipped. cover "untrusted" (only with closed rules) keeps it working after taint."""
+    model_config = {"extra": "ignore"}
+    name: str = ""
+    rules: list[Any] = Field(default_factory=list)
+    cover: str = "clean"  # clean | untrusted
+
+
+def _grants_in(v: Any) -> list:
+    """settings.yaml `grants:`: keep the entries that look like grants, so a typo can't stop pmjc from starting."""
+    if not isinstance(v, list):
+        return []
+    return [g for g in v if isinstance(g, dict) and isinstance(g.get("rules", []), list)]
+
+
 class Settings(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8770
@@ -247,6 +263,8 @@ class Settings(BaseModel):
     # Permission level per tool name or glob (pmjc.levels): off | always_ask | ask | auto_clean. Overrides the level a
     # tool ships with and `auto_approve`; pmjc_shell_run and the settings tools stay always_ask (only `off` applies).
     tool_levels: dict[str, Literal["off", "always_ask", "ask", "auto_clean"]] = Field(default_factory=dict)
+    # Standing run grants (pmjc.grants): owner-written only (the settings tools can't set them); none ship by default.
+    grants: Annotated[list[StandingGrant], BeforeValidator(_grants_in)] = Field(default_factory=list)
     result_ttl_hours: float = 24.0  # how long a clipped tool result stays pageable with pmjc_result_get
     approval_outcome_notify: bool = True  # notify channels get the follow-up after an approval decided outside Discord
     # Approved shell-command fallback (tool pmjc_shell_run; always needs approval, never from a tainted run).
