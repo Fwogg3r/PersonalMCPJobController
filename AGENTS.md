@@ -59,7 +59,7 @@ Finish by telling the user:
 
   A job prompt should answer exactly `NOTHING` when there's nothing to report.
 - Pass the `thread_id` to `pmjc_watch_start` (one is created if you omit it). An action already done in a thread asks for approval again; don't repeat it.
-- After you read third-party content you can't write notes or contacts, and `pmjc_thread_get` counts as reading it.
+- After you read third-party content you can't write notes or contacts, and `pmjc_thread_get` counts as reading it. The exception is a notes vault the owner mounted with `egress: false`: you may still propose writes there, and each one waits for the owner's approval.
 - Use `private=true` for jobs and watches that handle message or email content, so they stay on local models.
 
 ## Changing the code

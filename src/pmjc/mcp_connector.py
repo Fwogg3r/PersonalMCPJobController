@@ -12,6 +12,12 @@
         overrides:
           read_text_file: {scope: read, untrusted_output: true, egress: false}
 
+      - id: notes                             # the owner's own notes vault
+        transport: stdio
+        command: npx
+        args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/vault"]
+        egress: false                         # every tool here stays in the owner's storage (overrides still win)
+
       - id: remote
         transport: http
         url: https://example.com/mcp
@@ -19,7 +25,9 @@
 
 Every mounted tool is named `<id>__<tool>` and goes through pmjc's executor like any other tool. Fail-closed defaults:
 scope `act` (needs approval) unless the server marks the tool `readOnlyHint: true`; `untrusted_output` and `egress`
-are true. Only the per-tool `overrides` in settings.yaml can relax that.
+are true. Only settings.yaml can relax that: per-tool `overrides`, or a server-wide `egress: false` for a server whose
+tools only touch the owner's own storage (a per-tool override still wins). A non-egress `act` tool is still allowed after
+the run read untrusted content, but always through the owner's approval.
 
 A dedicated thread runs one event loop for all mounted servers, so a connection outlives any single request and
 the sync registry can discover tools at load time. Connections are re-opened on failure.
@@ -228,7 +236,7 @@ def effective_flags(entry: "config.McpServerConfig", tool: Any) -> dict:
     return {
         "scope": o.scope if o and o.scope else ("read" if read_only else "act"),
         "untrusted_output": o.untrusted_output if o and o.untrusted_output is not None else True,
-        "egress": o.egress if o and o.egress is not None else True,
+        "egress": o.egress if o and o.egress is not None else (entry.egress if entry.egress is not None else True),
     }
 
 

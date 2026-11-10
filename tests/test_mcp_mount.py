@@ -117,6 +117,31 @@ def test_per_tool_overrides():
     assert sn.scope == "read" and sn.egress and sn.untrusted_output
 
 
+def test_server_wide_egress_default_and_per_tool_override_wins():
+    reg = mount(egress=False, overrides={"lookup": {"egress": True}})
+    assert not reg.tool("fake__send_note").egress and not reg.tool("fake__danger").egress
+    assert reg.tool("fake__lookup").egress  # the per-tool override beats the server default
+    assert reg.tool("fake__send_note").untrusted_output  # only egress changes; outputs stay untrusted
+    assert mount().tool("fake__send_note").egress  # unset stays fail-closed
+
+
+async def test_owner_storage_write_after_untrusted_content_goes_to_approval_not_refusal():
+    from pmjc import executor
+    mount(egress=False)  # e.g. the owner's notes vault
+    c = caller()
+    await executor.call_tool(c, "fake__lookup", {"query": "web page"})
+    assert c.untrusted
+    res = await executor.call_tool(c, "fake__send_note", {"text": "todo"})
+    assert res["status"] == "pending_approval"  # proposed, never run without the owner
+    done = await executor.decide(res["approval_id"], True, "tester")
+    assert done["status"] == "done" and "sent todo" in str(done["result"])
+    mount()  # the default mount still refuses it
+    c2 = caller()
+    await executor.call_tool(c2, "fake__lookup", {"query": "web page"})
+    with pytest.raises(executor.Denied):
+        await executor.call_tool(c2, "fake__send_note", {"text": "todo"})
+
+
 async def test_failed_server_is_unhealthy_without_breaking_others():
     from pmjc import config, registry
     s = config.load()

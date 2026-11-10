@@ -139,6 +139,10 @@ class McpServerConfig(BaseModel):
     tools: list[str] | None = None  # allowlist of the server's tool names; None = all
     exclude: list[str] = Field(default_factory=list)
     overrides: dict[str, McpToolOverride] = Field(default_factory=dict)  # keyed by the server's tool name
+    # Server-wide default for its tools' `egress` flag (a per-tool override still wins). Leave it unset (= egress) unless
+    # every tool only reads or writes the owner's own storage, e.g. a notes vault: then `false` lets a run that read
+    # untrusted content still propose writes there (they still need approval, see executor.call_tool).
+    egress: bool | None = None
     timeout: float = 20.0  # seconds to connect and list tools
     call_timeout: float = 60.0
     max_output: int = 20000

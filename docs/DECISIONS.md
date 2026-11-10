@@ -170,3 +170,10 @@ The numbers below are one example setup (a 27B 4-bit model on a 24 GB card); kee
   - Applying is a compare-and-swap under a cross-process lock (the file's hash is part of the approval), patches only the changed keys (ruamel round-trip, comments kept), validates, keeps backups, and audits the diff. Revert is a diff through the same allowlist.
   - Profiles: the owner defines named settings overlays (e.g. `gaming`, `travel`, `paused`) on the desktop; chat may propose `pmjc_profile_switch(name)`, shown as a diff.
 - **Why:** an injected prompt can only choose among safe or owner-vetted states, approvals stay meaningful on a phone, and privacy is enforced on provider `trust`, not tier names (tiers and route rules stay desktop-only until that invariant check exists).
+
+## Server-wide `egress: false` for MCP mounts that only touch the owner's storage (owner request, 2026-11-10)
+- **Goal:** let a run that has read untrusted content (a web page, a SharePoint document) still write to the owner's notes vault. Before this, the vault's write tools were `egress` like every mounted tool, so `notes__write_file` was refused outright after taint.
+- **Options:** (a) per-tool `overrides` only (already possible, but every write tool must be listed and new server tools come back as egress); (b) a server-level `egress` default; (c) a special "notes" tool class in code.
+- **Decision:** (b). `McpServerConfig.egress` sets the default for the server's tools; a per-tool override still wins; unset stays `egress=True` (fail-closed). Nothing else changes: the tools stay `act` with `untrusted_output`, and an `act` call from a tainted run always goes to the owner's approval (never auto-approved).
+- **Why:** the vault is the owner's own storage, so writing there isn't the exfiltration the egress rule exists to stop; the approval prompt remains the check on injected writes. Documented trade-off in CONNECTORS.md: don't use it for storage that syncs to places the owner doesn't control.
+

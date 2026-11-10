@@ -144,7 +144,7 @@ mcp_servers:
     bearer_credential: mcp.remote.bearer      # credential-store key (the default); set it with `pmjc auth secret`
 ```
 
-Safe defaults: every tool is `act` (needs approval) unless the server marks it `readOnlyHint: true`, and every tool is `untrusted_output` and `egress` unless you override it. `uv run pmjc mcp list` shows each server's health, tools and effective flags. See DECISIONS.md.
+Safe defaults: every tool is `act` (needs approval) unless the server marks it `readOnlyHint: true`, and every tool is `untrusted_output` and `egress` unless you override it. A server-wide `egress: false` sets the default for all of a server's tools at once (a per-tool override still wins); use it only for a server whose tools all stay in your own storage, such as a notes vault. `uv run pmjc mcp list` shows each server's health, tools and effective flags. See DECISIONS.md.
 
 
 ### Example: a notes vault (Obsidian or any Markdown folder)
@@ -167,3 +167,16 @@ mcp_servers:
 ```
 
 Write, edit, move and copy stay `act` tools, so every change to a note needs your approval. Check the result with `pmjc mcp list`.
+
+With only the read tools overridden, a run that has read a web page or a message can't write a note at all: the write tools are still `egress`, and egress is refused after untrusted content. If you want those runs to be able to *propose* note changes (you still approve each one), mark the whole server as staying in your storage instead:
+
+```yaml
+mcp_servers:
+  - id: notes
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem@2.2.0", "/path/to/vault"]
+    egress: false           # every tool here only touches the vault
+```
+
+The trade-off: a prompt injected into something the run read can then propose writing to your vault, and the approval prompt is what stops it. Read the proposed path and content before approving. Don't use `egress: false` if the vault syncs somewhere you don't control.
