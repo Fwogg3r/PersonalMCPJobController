@@ -20,7 +20,7 @@ import sys
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from . import config
+from . import config, levels
 from .connector import Connector
 import yaml
 
@@ -43,6 +43,7 @@ class ToolSpec:
     schema: dict | None = None  # JSON schema passed through as-is (mounted MCP tools); else derived from the signature
     writes_state: bool = False  # writes durable trusted state (notes, contacts, jobs, watches): approval after taint
     private_output: bool = True  # result may hold the user's private data (False: public-web results)
+    level: str | None = None  # shipped permission level (pmjc.levels); None = ask
 
     @property
     def mcp_scope(self) -> str:
@@ -151,9 +152,12 @@ class Registry:
             log.warning("connector %s failed to load: %s", k, v)
         return self
 
-    def tools(self, include_unconfigured: bool = False) -> list[ToolSpec]:
+    def tools(self, include_unconfigured: bool = False, include_off: bool = False) -> list[ToolSpec]:
+        """Every tool of the loaded connectors. Tools the owner set to `off` (settings `tool_levels`) are left out
+        unless `include_off` (the executor uses that to refuse them by name)."""
         out: list[ToolSpec] = []
         seen: set[str] = set()
+        tool_levels = {} if include_off else config.load().tool_levels
         for c in self.connectors.values():
             if not include_unconfigured and not c.configured():
                 continue
@@ -163,6 +167,8 @@ class Registry:
                     log.warning("duplicate tool name %s in %s; skipped", name, c.id)
                     continue
                 seen.add(name)
+                if tool_levels and levels.configured(name, tool_levels) == "off":
+                    continue
                 raw = inspect.getdoc(fn) or ""
                 if c.instance:
                     raw = f"[{c.instance}] {raw}"
@@ -171,11 +177,12 @@ class Registry:
                                     raw_doc=raw,
                                     schema=getattr(fn, "__pmjc_schema__", None),
                                     writes_state=meta.get("writes_state", False),
-                                    private_output=meta.get("private_output", True)))
+                                    private_output=meta.get("private_output", True),
+                                    level=meta.get("level")))
         return out
 
     def tool(self, name: str) -> ToolSpec | None:
-        return next((t for t in self.tools(include_unconfigured=True) if t.name == name), None)
+        return next((t for t in self.tools(include_unconfigured=True, include_off=True) if t.name == name), None)
 
     def channels(self) -> list[Connector]:
         order = config.load().notify_channels

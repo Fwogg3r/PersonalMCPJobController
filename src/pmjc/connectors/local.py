@@ -416,7 +416,7 @@ class LmStudio(Connector):
             m = r.json()["choices"][0]["message"]
         return {"model": use, "answer": m.get("content") or "", "reasoning": (m.get("reasoning_content") or "")[:2000]}
 
-    @tool(scope="act")
+    @tool(scope="act", level="auto_clean")
     async def lmstudio_load(self, model: str, host: str | None = None) -> dict:
         """Load a model into GPU/CPU memory on a host (uses VRAM until unloaded). Needs approval."""
         url = self._url(host)
@@ -425,7 +425,7 @@ class LmStudio(Connector):
                              json={"model": model, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1})
             return {"status": r.status_code, "loaded": model if r.status_code == 200 else None}
 
-    @tool(scope="act")
+    @tool(scope="act", level="auto_clean")
     async def lmstudio_unload(self) -> dict:
         """Unload every model from the LM Studio on THIS machine (frees GPU memory). For other machines use ssh_run
         with `lms unload --all`. Needs approval."""

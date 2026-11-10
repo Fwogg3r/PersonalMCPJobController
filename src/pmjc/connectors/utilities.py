@@ -122,7 +122,7 @@ class GitHub(Connector):
         d = await self._api("GET", "/search/issues", params={"q": query, "per_page": min(limit, 50)})
         return [{"title": i["title"], "url": i["html_url"], "state": i["state"], "user": i["user"]["login"]} for i in d["items"]]
 
-    @tool(scope="act")
+    @tool(scope="act", level="always_ask")
     async def github_comment(self, repo: str, number: int, body: str) -> dict:
         """Comment on an issue or pull request (repo = owner/name; number from github_search_issues or github_notifications)."""
         d = await self._api("POST", f"/repos/{repo}/issues/{number}/comments", json={"body": body})

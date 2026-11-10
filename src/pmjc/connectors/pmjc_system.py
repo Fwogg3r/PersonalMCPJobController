@@ -267,7 +267,7 @@ class Pmjc(Connector):
         from .. import commands
         return await commands.status(run_id, wait_seconds, _caller)
 
-    @tool(scope="act")
+    @tool(scope="act", level="auto_clean")
     async def command_stop(self, run_id: str, _caller=None) -> dict:
         """Stop a command that is still running (kills it and what it started). Needs approval. Only works for
         commands started by this caller, in the process that runs them."""
@@ -393,7 +393,7 @@ class Pmjc(Connector):
             sql += " WHERE job=?"; args.append(job)
         return db.q(sql + " ORDER BY id DESC LIMIT ?", *args, min(limit, 100))
 
-    @tool(scope="act", untrusted_output=True)
+    @tool(scope="act", untrusted_output=True, level="always_ask")
     async def pmjc_shell_run(self, command: str, timeout_seconds: int | None = None, max_output_chars: int | None = None,
                              shell: str | None = None, cwd: str | None = None, wait_seconds: int | None = None) -> dict:
         """LAST RESORT, only when no other pmjc tool can do the job (e.g. editing a file no tool can write). Proposes
@@ -421,7 +421,7 @@ class Pmjc(Connector):
         from .. import settings_edit
         return settings_edit.get(path)
 
-    @tool(scope="act", writes_state=True)
+    @tool(scope="act", writes_state=True, level="always_ask")
     async def pmjc_settings_set(self, changes: dict, reason: str, _base_hash: str | None = None, _old: dict | None = None,
                                 _risk: list | None = None, _surface: str = "") -> dict:
         """Propose changes to pmjc's own settings: changes = {"settings path": new value}, at most 3 paths of one risk
@@ -433,7 +433,7 @@ class Pmjc(Connector):
         from .. import settings_edit
         return settings_edit.apply("set", changes, _base_hash)
 
-    @tool(scope="act", writes_state=True)
+    @tool(scope="act", writes_state=True, level="always_ask")
     async def pmjc_settings_revert(self, backup_id: str, reason: str = "", _changes: dict | None = None,
                                    _base_hash: str | None = None, _backup_sha: str | None = None, _old: dict | None = None,
                                    _risk: list | None = None, _surface: str = "") -> dict:
@@ -443,7 +443,7 @@ class Pmjc(Connector):
         from .. import settings_edit
         return settings_edit.apply("revert", _changes, _base_hash, _backup_sha, backup_id)
 
-    @tool(scope="act", writes_state=True)
+    @tool(scope="act", writes_state=True, level="always_ask")
     async def pmjc_profile_switch(self, name: str, reason: str = "", _changes: dict | None = None,
                                   _base_hash: str | None = None, _old: dict | None = None, _risk: list | None = None,
                                   _surface: str = "") -> dict:

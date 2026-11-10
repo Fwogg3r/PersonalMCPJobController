@@ -15,7 +15,7 @@ import time
 from typing import Any
 from urllib.parse import urlparse, urlsplit
 
-from . import auth, config, db, defang, memory, registry, results, route_choice, settings_edit, shell
+from . import auth, config, db, defang, levels, memory, registry, results, route_choice, settings_edit, shell
 from .auth import Caller
 
 log = logging.getLogger("pmjc.executor")
@@ -141,6 +141,11 @@ async def _call_tool(caller: Caller, name: str, args: dict | None, reason: str) 
     t = registry.get().tool(name)
     if t is None:
         raise Denied(f"unknown tool {name}")
+    settings = config.load()
+    level = levels.effective(name, t.level, settings.tool_levels, set(settings.auto_approve) | set(caller.auto_approve))
+    if level == "off":
+        db.audit(caller.name, name, payload_hash(name, args), "denied", "tool is off")
+        raise Denied(f"{name} is turned off in pmjc's settings (tool_levels)")
     if name == shell.TOOL:  # approved shell-command fallback: gate and fix the effective limits before hashing
         why = shell.check_proposal(caller)
         if why:
@@ -176,9 +181,9 @@ async def _call_tool(caller: Caller, name: str, args: dict | None, reason: str) 
     if t.scope == "act":
         if memory.act_done(caller.thread_id, name, h):  # same act, same payload, same thread: the user decides again
             return await request_approval(caller, name, args, "already done in this thread; approve only if it should repeat")
-        never_auto = name == shell.TOOL or name in settings_edit.TOOLS  # always approved, even for auto_approve or the CLI
-        auto = (name in caller.auto_approve or name in config.load().auto_approve) and not never_auto
-        if caller.untrusted or never_auto or (caller.needs_approval and not auto):
+        hard = levels.hard_floor(name)  # shell and settings tools: always approved, even at the CLI
+        auto = level == "auto_clean"  # never for a tainted run (below); levels.effective folds in the auto_approve lists
+        if caller.untrusted or hard or (caller.needs_approval and not auto):
             why = reason or ("proposed by a run that read untrusted content" if caller.untrusted else "")
             return await request_approval(caller, name, args, why)
     try:

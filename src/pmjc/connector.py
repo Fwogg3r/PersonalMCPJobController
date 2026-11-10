@@ -30,6 +30,7 @@ from typing import Any, Callable, Literal
 import httpx
 
 from . import config, creds, db
+from .levels import LEVELS
 
 Scope = Literal["read", "act", "jobs"]  # jobs = pmjc job management (needs the jobs scope)
 
@@ -73,7 +74,7 @@ TOOL_NAME = re.compile(r"^[a-zA-Z0-9_]{1,64}$")
 
 def tool(fn: Callable | None = None, *, scope: Scope = "act", name: str | None = None,
          untrusted_output: bool = False, egress: bool = False, writes_state: bool = False,
-         private_output: bool = True):
+         private_output: bool = True, level: str | None = None):
     """Mark a connector method as a tool. Fail-closed defaults:
 
     scope="act" (default) means the call changes something outside pmjc (sends, posts, buys, switches);
@@ -87,13 +88,18 @@ def tool(fn: Callable | None = None, *, scope: Scope = "act", name: str | None =
       memory. Opt in on every new tool of that kind; mounted MCP tools are `act` and need approval anyway.
     private_output=False: the result is public-web data (search, fetch, weather), not the user's private data.
       The default is True (fail-closed): a run that calls such a tool is marked `sensitive` (Caller.sensitive).
+    level: the shipped permission level (pmjc.levels: off | always_ask | ask | auto_clean); None = ask. The owner's
+      `tool_levels` and `auto_approve` settings override it. Use always_ask for tools that send free text to other
+      people, spend money or click on the web; auto_clean only for act tools with no lasting or outside effect.
     """
     def wrap(f: Callable) -> Callable:
         n = name or f.__name__
         if not TOOL_NAME.match(n):
             raise ValueError(f"tool name {n!r} must match {TOOL_NAME.pattern}")
+        if level is not None and level not in LEVELS:
+            raise ValueError(f"tool {n!r}: level must be one of {LEVELS}")
         f.__pmjc_tool__ = {"scope": scope, "name": n, "untrusted_output": untrusted_output, "egress": egress,
-                           "writes_state": writes_state, "private_output": private_output}
+                           "writes_state": writes_state, "private_output": private_output, "level": level}
         return f
     return wrap(fn) if fn else wrap
 

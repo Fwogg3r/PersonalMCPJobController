@@ -171,9 +171,7 @@ async def test_command_stop_kills_a_running_command():
     c = caller("agent")
     p = await call(c, "ssh_run", machine="local", command="import time; time.sleep(60)")
     rid = (await executor.decide(p["approval_id"], True, "owner"))["result"]["run_id"]
-    sp = await call(c, "command_stop", run_id=rid)
-    assert sp["status"] == "pending_approval"
-    out = (await executor.decide(sp["approval_id"], True, "owner"))["result"]
+    out = await call(c, "command_stop", run_id=rid)  # ships as auto_clean: a clean run stops its own command directly
     assert out["status"] == "done" and out["stopped"] is True
     assert (await commands.status(rid, 0, c))["status"] == "done"
 

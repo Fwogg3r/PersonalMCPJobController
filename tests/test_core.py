@@ -343,3 +343,52 @@ async def test_watch_from_another_process_is_adopted_and_expires():
         assert e.watches.status(w["id"])["status"] == "expired"
     finally:
         e.sched.shutdown(wait=False)
+
+
+def test_levels_precedence():
+    from pmjc import levels
+    assert levels.effective("x_send", None, {}) == "ask"
+    assert levels.effective("x_send", "always_ask", {}) == "always_ask"
+    assert levels.effective("x_send", "always_ask", {}, {"x_send"}) == "auto_clean"  # the owner's list beats a shipped default
+    assert levels.effective("x_send", None, {"x_*": "always_ask"}, {"x_send"}) == "always_ask"  # tool_levels beats the list
+    assert levels.effective("x_send", None, {"x_*": "off", "x_send": "ask"}) == "ask"  # exact key beats a glob
+    assert levels.effective("x_send", None, {"*": "off", "x_*": "auto_clean"}) == "auto_clean"  # longest glob wins
+    assert levels.effective("pmjc_shell_run", None, {"pmjc_shell_run": "auto_clean"}, {"pmjc_shell_run"}) == "always_ask"
+    assert levels.effective("pmjc_settings_set", None, {"pmjc_settings_set": "off"}) == "off"
+
+
+def test_shipped_levels():
+    reg = _reg()
+    t = {x.name: x.level for x in reg.tools(include_unconfigured=True)}
+    assert t["discord_send"] == "always_ask" and t["browser_act"] == "always_ask"
+    assert t["lmstudio_load"] == "auto_clean" and t["gmail_draft"] == "auto_clean"
+    assert t["ssh_run"] is None  # ask
+
+
+async def test_tool_levels_off_hides_and_refuses():
+    from pmjc import auth, config, executor
+    s = config.load(); s.tool_levels = {"fake_s*": "off"}; config.save(s)
+    reg = _reg()
+    names = {x.name for x in reg.tools()}
+    assert "fake_send" not in names and "fake_search" not in names and "fake_messages" in names
+    with pytest.raises(executor.Denied, match="turned off"):
+        await executor.call_tool(auth.admin(), "fake_send", {"to": "a"})
+
+
+async def test_tool_levels_auto_clean_and_always_ask():
+    from pmjc import auth, config, executor
+    s = config.load(); s.tool_levels = {"fake_send": "auto_clean"}; config.save(s)
+    _reg()
+    c = auth.Caller("agent", "remote", {"sources", "actions"})
+    assert await executor.call_tool(c, "fake_send", {"to": "a"}) == {"sent": "a"}
+    await executor.call_tool(c, "fake_messages", {})  # tainted: auto_clean no longer applies
+    assert (await executor.call_tool(c, "fake_send", {"to": "b"}))["status"] == "pending_approval"
+    s = config.load(); s.tool_levels = {"fake_send": "always_ask"}; s.auto_approve = ["fake_send"]; config.save(s)
+    c2 = auth.Caller("agent2", "remote", {"sources", "actions"}, auto_approve={"fake_send"})
+    assert (await executor.call_tool(c2, "fake_send", {"to": "c"}))["status"] == "pending_approval"
+    assert await executor.call_tool(auth.admin(), "fake_send", {"to": "d"}) == {"sent": "d"}  # a person at the CLI
+
+
+def test_tool_levels_not_settable_from_chat():
+    from pmjc import settings_edit
+    assert "tool_levels" in settings_edit.HARD_DENY_TOP

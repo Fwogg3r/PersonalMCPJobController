@@ -42,7 +42,7 @@ class Discord(Connector):
                  "attachments": [{"url": a["url"], "type": a.get("content_type"), "name": a["filename"]} for a in m.get("attachments", [])]}
                 for m in reversed(msgs)]
 
-    @tool(scope="act")
+    @tool(scope="act", level="always_ask")
     async def discord_send(self, channel_id: str, content: str) -> dict:
         """Post a message in a channel AS THE BOT, not as the user. channel_id comes from discord_channels."""
         m = await self._api("POST", f"/channels/{channel_id}/messages",
@@ -65,7 +65,7 @@ class Discord(Connector):
         ch = await self._api("POST", "/users/@me/channels", json={"recipient_id": str(user_id)})
         return ch["id"], str(user_id)
 
-    @tool(scope="act")
+    @tool(scope="act", level="always_ask")
     async def discord_dm(self, content: str, user_id: str | None = None, contact: str | None = None) -> dict:
         """Send a direct message AS THE BOT (not as the user) to someone who shares a server with the bot. Give the
         person's numeric user_id, or a contact name/alias whose handles include discord_user_id (see
@@ -122,7 +122,7 @@ class Telegram(Connector):
         return [{"chat_id": u["message"]["chat"]["id"], "from": u["message"].get("from", {}).get("username"),
                  "text": u["message"].get("text", ""), "ts": u["message"]["date"]} for u in ups if "message" in u]
 
-    @tool(scope="act")
+    @tool(scope="act", level="always_ask")
     async def telegram_send(self, text: str, chat_id: str | None = None) -> dict:
         """Send a Telegram message as the bot (to the user's own chat by default; chat_id otherwise)."""
         m = await self._api("sendMessage", chat_id=chat_id or self.secret("chat_id"), text=text[:4000],
@@ -170,7 +170,7 @@ class Slack(Connector):
         d = await self._api("conversations.history", channel=channel_id, limit=min(limit, 200))
         return [{"user": m.get("user"), "text": m.get("text", ""), "ts": m["ts"]} for m in reversed(d["messages"])]
 
-    @tool(scope="act")
+    @tool(scope="act", level="always_ask")
     async def slack_send(self, channel_id: str, text: str) -> dict:
         """Post a message in a channel as the app, not as the user. channel_id comes from slack_channels."""
         d = await self._api("chat.postMessage", channel=channel_id, text=text[:4000], unfurl_links=False, unfurl_media=False)

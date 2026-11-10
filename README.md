@@ -13,7 +13,7 @@ you                                    ──► dashboard · CLI      ┘      
 - **Every interface from one registry.** Add a connector and its tools appear in MCP, REST/OpenAPI, the CLI, the dashboard and the tool exports at once.
 - **Modular.** A new service is one small Python file, or a YAML file if it's a plain HTTP API.
 - **PC-native sensing.** On Windows, pmjc reads the notification center, so any app that notifies you (Discord, Messenger in Chrome, Outlook, ...) becomes an event source. It can hide those banners so only pmjc sees them.
-- **Safe by default.** Tools that change things need your approval (dashboard, phone notification or link). Runs that read third-party content can't send data out. Tokens are scoped, every call is audited, and there's a kill switch.
+- **Safe by default.** Tools that change things need your approval (dashboard, phone notification or link). Each tool has a permission level (`off`, `always_ask`, `ask`, `auto_clean`) with safe shipped defaults: messages to other people always ask, harmless actions such as loading a local model run without a prompt; change any of them with `tool_levels` in settings.yaml. Runs that read third-party content can't send data out. Tokens are scoped, every call is audited, and there's a kill switch.
 - **One chat app for everything.** Point any OpenAI-compatible chat app, on your phone or PC, at pmjc's `/v1` endpoint. pmjc picks the model (local first), the tools and the thread for each message ([docs/FRONT_DOOR.md](docs/FRONT_DOOR.md)). Chat commands (`/tools`, `/connectors`, `/approvals`, `/status`, `/model`, `/threads`, `/new`) are answered by pmjc itself, with no model run.
 - **Built for local models.** Compact tool schemas, one-line tool briefs with on-demand loading, bounded tool results with paging, automatic condensing near the context limit, and a quarantined web-research sub-run keep a 32k-64k model useful. `pmjc eval` measures whether a change actually helps.
 - **Reuse existing MCP servers.** Mount any MCP server (GitHub, Spotify, notes apps, ...) as a connector; pmjc's approvals and taint rules apply to its tools too.
@@ -87,6 +87,13 @@ The **Settings** tab also shows what's polling right now and lets you delete sto
 - **On the Ask tab:** under any request, **Run automatically** turns it into a job: every N minutes, or daily at a time. By default it only notifies you when there's something new. **Requests you repeat** lists what you've asked more than once, each with an **Automate** button.
 - **On the Jobs tab:** **Turn on / Turn off** each job. Scheduled jobs also need the **Scheduled jobs** switch on the Settings tab; automating a request turns it on for you.
 - **On the Settings tab:** **Run actions without asking** lets you tick actions (e.g. `home_switch`) that may run without an approval prompt. They still ask whenever the run has read third-party content.
+- **Permission levels in settings.yaml** (exact tool names or globs; they beat the ticked list and the shipped defaults):
+  ```yaml
+  tool_levels:
+    notes__*: auto_clean       # a mounted notes vault: write without a prompt while the run is clean
+    ha_call_service: always_ask
+    browser_*: off             # hide and refuse these tools
+  ```
 - **The same over the API:** `POST /api/asks/automate`, `PUT /api/jobs/<name>/enabled`, `PUT /api/auto-approve`.
 
 ## Requests and watches

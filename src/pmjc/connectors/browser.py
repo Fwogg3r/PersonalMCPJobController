@@ -293,7 +293,7 @@ class Browser(Connector):
         self._check(url)
         return await self._run_steps(url, validate_steps(steps, BROWSE_STEPS), True, max_chars)
 
-    @tool(scope="act", untrusted_output=True, egress=True)
+    @tool(scope="act", untrusted_output=True, egress=True, level="always_ask")
     async def browser_act(self, url: str, steps: list[dict], max_chars: int = 8000) -> dict:
         """Open a page, run up to 10 steps that may change things (type into fields, press keys, click anything including submit buttons), then return the final text, links and URL. Needs approval; the approval shows the steps. Steps (one key each): {"scroll": screens}, {"wait": seconds}, {"wait_for": css_selector}, {"click": css_selector or "text=Visible label"}, {"type": {"selector": css, "text": "..."}}, {"press": "Enter"}. Same domain rules as browser_read, checked again after each step."""
         self._check(url)

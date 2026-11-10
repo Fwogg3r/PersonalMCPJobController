@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from . import __version__, agent, auth, config, creds, db, discord_door, executor, jobs, mcp_server, memory, registry, router, settings_edit
+from . import __version__, agent, auth, config, creds, db, discord_door, executor, jobs, levels, mcp_server, memory, registry, router, settings_edit
 from .auth import Caller
 from .connector import Event
 
@@ -186,8 +186,11 @@ def create_app() -> FastAPI:
     # ---- tools (any agent framework)
     @app.get("/api/tools", tags=["tools"])
     async def list_tools(c: Caller = Depends(bearer)):
+        s = config.load()
         return [{"name": t.name, "connector": t.connector, "scope": t.scope, "description": t.doc,
-                 "egress": t.egress, "untrusted_output": t.untrusted_output, "parameters": registry.tool_json_schema(t)}
+                 "egress": t.egress, "untrusted_output": t.untrusted_output,
+                 "level": levels.effective(t.name, t.level, s.tool_levels, s.auto_approve) if t.scope == "act" else None,
+                 "parameters": registry.tool_json_schema(t)}
                 for t in registry.get().tools() if c.can(t.mcp_scope)]
 
     @app.get("/api/tools/export/{fmt}", tags=["tools"])

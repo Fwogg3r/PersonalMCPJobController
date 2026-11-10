@@ -80,7 +80,7 @@ class Google(OAuth2Mixin, Connector):
         return {"from": h.get("From"), "subject": h.get("Subject"), "date": h.get("Date"),
                 "text": "\n".join(walk(d["payload"]))[:max_chars] or d.get("snippet", "")}
 
-    @tool(scope="act")
+    @tool(scope="act", level="auto_clean")
     async def gmail_draft(self, to: str, subject: str, body: str) -> dict:
         """Create a Gmail draft. It is NOT sent: the user sends it from Gmail (follow with pmjc_handoff if they should act now)."""
         msg = EmailMessage()

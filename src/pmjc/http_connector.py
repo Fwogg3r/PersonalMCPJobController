@@ -67,7 +67,7 @@ def _make_tool(spec: dict) -> Any:
                                          return_annotation=Any)
     fn.__annotations__ = {p.name: p.annotation for p in sig_params} | {"return": Any}
     return tool(fn, scope=spec.get("scope", "act"), untrusted_output=spec.get("untrusted_output", True),
-                egress=spec.get("egress", bool(params)))
+                egress=spec.get("egress", bool(params)), level=spec.get("level"))
 
 
 class HttpConnector(Connector):

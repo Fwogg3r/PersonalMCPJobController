@@ -12,6 +12,7 @@ Put a file in PMJC_HOME/connectors.d/ with `kind: command`:
       - name: mytools_roadmap
         description: List a project's roadmap.
         scope: read                        # read | act (act needs approval); default act
+        # level: auto_clean                # optional permission level (off | always_ask | ask | auto_clean)
         untrusted_output: false            # default true
         argv: [roadmap, list, --json, --dir, "{project}/docs/roadmap"]
         params:
@@ -73,7 +74,7 @@ def _make_tool(spec: dict) -> Any:
                                          return_annotation=Any)
     fn.__annotations__ = {p.name: p.annotation for p in sig} | {"return": Any}
     return tool(fn, scope=spec.get("scope", "act"), untrusted_output=spec.get("untrusted_output", True),
-                egress=spec.get("egress", False))
+                egress=spec.get("egress", False), level=spec.get("level"))
 
 
 class CommandConnector(Connector):

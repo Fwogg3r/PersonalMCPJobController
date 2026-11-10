@@ -243,7 +243,10 @@ class Settings(BaseModel):
     connectors: dict[str, dict[str, Any]] = Field(default_factory=dict)  # per-connector non-secret options
     disabled_connectors: list[str] = Field(default_factory=list)
     enabled_plugins: list[str] = Field(default_factory=list)  # entry-point connector names allowed to load
-    auto_approve: list[str] = Field(default_factory=list)  # act tools that run without approval (any caller)
+    auto_approve: list[str] = Field(default_factory=list)  # act tools that run without approval in clean runs (any caller)
+    # Permission level per tool name or glob (pmjc.levels): off | always_ask | ask | auto_clean. Overrides the level a
+    # tool ships with and `auto_approve`; pmjc_shell_run and the settings tools stay always_ask (only `off` applies).
+    tool_levels: dict[str, Literal["off", "always_ask", "ask", "auto_clean"]] = Field(default_factory=dict)
     result_ttl_hours: float = 24.0  # how long a clipped tool result stays pageable with pmjc_result_get
     approval_outcome_notify: bool = True  # notify channels get the follow-up after an approval decided outside Discord
     # Approved shell-command fallback (tool pmjc_shell_run; always needs approval, never from a tainted run).
