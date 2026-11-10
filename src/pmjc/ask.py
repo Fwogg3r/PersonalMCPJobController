@@ -186,6 +186,7 @@ async def ask(caller: Caller, text: str, private: bool = False, provider_order: 
     executor.audit_run(caller, "ask")
     return {"answer": answer, "provider": res.provider, "watches": watches, "thread_id": thread_id,
             "cost_usd": round(res.cost_usd, 5), "fell_back": res.fell_back,
+            "streamed": bool(getattr(res, "streamed", False)) and answer == res.text,  # (a defanged answer goes out whole)
             "untrusted": caller.untrusted, "sensitive": caller.sensitive, "routing": info}
 
 

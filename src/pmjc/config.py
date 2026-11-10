@@ -47,6 +47,8 @@ class ProviderConfig(BaseModel):
     start_timeout: int = 90
     trust: str = "cloud"  # local | cloud. Jobs marked data: private only use local providers.
     load_model: bool = True  # for LM Studio hosts: run `lms load <model>` if the model isn't loaded
+    parallel: int | None = None  # LM Studio: requests the model serves at once (`lms load --parallel`); 1 keeps a big model in VRAM
+    stream: bool = True  # openai_compat: stream responses (progress while the prompt is read, answer and thinking live, per-call log)
     capabilities: list[str] = Field(default_factory=lambda: ["tools"])
     context_tokens: int = 32000
     schema_mode: str = "full"  # full | compact: compact sends shorter tool descriptions and schemas (small-context models)
@@ -159,6 +161,8 @@ class FrontDoorConfig(BaseModel):
     max_body_bytes: int = 1_000_000
     rate_limit_per_minute: int = 30  # per token
     keepalive_seconds: float = 10.0  # SSE comment interval while waiting (stops mobile clients timing out)
+    stream_answer: bool = True  # stream the model's answer as it is written (local/openai_compat providers)
+    reasoning: str = "field"  # the model's thinking: field (delta.reasoning_content) | think_tags (<think> in content) | off
 
 
 class ResearchConfig(BaseModel):

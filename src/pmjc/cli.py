@@ -333,6 +333,28 @@ def routing(days: Optional[float] = typer.Option(None, "--days", help="summarise
     _out(asyncio.run(router.status()))
 
 
+@app.command("completions")
+def completions_cmd(last: int = typer.Option(20, "--last", help="how many calls"),
+                    provider: Optional[str] = typer.Option(None, "--provider", help="only this provider id"),
+                    as_json: bool = typer.Option(False, "--json", help="raw rows")):
+    """Recent model calls (newest first): prompt size, tools sent, time to first token, output speed, status."""
+    from . import completions
+    rows = completions.recent(last, provider)
+    if as_json:
+        _out(rows)
+        return
+    import datetime
+    for r in rows:
+        ts = datetime.datetime.fromtimestamp(r["ts"]).strftime("%m-%d %H:%M:%S")
+        first = f"{r['ttft_s']:.1f}s" if r["ttft_s"] is not None else "-"
+        speed = f"{r['gen_tps']} tok/s" if r["gen_tps"] else "-"
+        bad = f"  [{r['status']}: {r['error']}]" if r["status"] != "ok" else ""
+        typer.echo(f"{ts}  {r['provider']:<16} turn {r['turn']:<2} prompt {r['prompt_tokens'] or 0:>6} "
+                   f"({r['cached_tokens'] or 0} cached)  tools {r['tools_sent']:>3}  first token {first:>7}  "
+                   f"out {r['completion_tokens'] or 0:>5} ({r['reasoning_tokens'] or 0} thinking) {speed:>11}  "
+                   f"total {r['total_s']:.1f}s{bad}")
+
+
 # --- jobs ---------------------------------------------------------------------------------------------
 @jobs_app.command("list")
 def jobs_list():

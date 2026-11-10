@@ -1,4 +1,4 @@
-"""SQLite state: events, job runs, approvals, client tokens, audit log, model spend."""
+"""SQLite state: events, job runs, approvals, client tokens, audit log, model spend, model calls."""
 from __future__ import annotations
 
 import json
@@ -27,6 +27,11 @@ CREATE TABLE IF NOT EXISTS audit (
 CREATE TABLE IF NOT EXISTS spend (
   id INTEGER PRIMARY KEY, ts REAL, provider TEXT, usd REAL, tokens_in INTEGER, tokens_out INTEGER);
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS completions (
+  id INTEGER PRIMARY KEY, ts REAL, caller TEXT, thread_id TEXT, provider TEXT, model TEXT, turn INTEGER,
+  tools_sent INTEGER, schema_tokens INTEGER, prompt_tokens INTEGER, cached_tokens INTEGER, completion_tokens INTEGER,
+  reasoning_tokens INTEGER, ttft_s REAL, total_s REAL, gen_tps REAL, finish TEXT, status TEXT, error TEXT);
+CREATE INDEX IF NOT EXISTS completions_ts ON completions(ts);
 CREATE TABLE IF NOT EXISTS command_runs (
   run_id TEXT PRIMARY KEY, tool TEXT, machine TEXT, command TEXT, owner TEXT, started REAL, status TEXT,
   exit_code INTEGER, output_tail TEXT, finished REAL, detached INTEGER DEFAULT 0, timed_out INTEGER DEFAULT 0);

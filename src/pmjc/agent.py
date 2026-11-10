@@ -18,7 +18,7 @@ from pathlib import Path
 
 import httpx
 
-from . import auth, config, creds, db, executor, memory, registry, results, router, routing, tool_select
+from . import auth, completions, config, creds, db, executor, memory, registry, results, router, routing, tool_select
 from .auth import Caller
 from .config import ProviderConfig
 from .registry import ToolSpec
@@ -53,6 +53,7 @@ class Result:
     turns: int = 0
     fell_back: list[str] = field(default_factory=list)  # providers tried before this one, with the reason
     waited_s: float = 0.0  # seconds this request waited for a local host to start
+    streamed: bool = False  # the whole answer already went out through caller.on_delta
 
 
 PAGE_TOOL = "pmjc_result_get"
@@ -365,18 +366,25 @@ async def _openai_loop(p: ProviderConfig, prompt, caller, tools, system, max_tur
             if schema:
                 body["tools"] = schema
             with router.local_inflight() if p.trust == "local" else contextlib.nullcontext():
-                r = await c.post(p.base_url.rstrip("/") + "/chat/completions", json=body, headers=headers)
-            if r.status_code >= 400:  # keep the server's reason (e.g. "exceeds the available context size")
-                raise RuntimeError(f"HTTP {r.status_code} from {p.id}: {r.text[:400]}")
-            data = r.json()
-            u = data.get("usage") or {}
+                if p.stream:  # streamed: progress while the prompt is read, answer/thinking forwarded, call logged
+                    got = await completions.call(c, p, body, headers, caller, turn=turn, tools_sent=len(schema),
+                                                 schema_tokens=schema_tokens,
+                                                 prompt_tokens_est=_tokens(msgs) + schema_tokens)
+                    m, u = got.message, got.usage
+                else:
+                    r = await c.post(p.base_url.rstrip("/") + "/chat/completions", json=body, headers=headers)
+                    if r.status_code >= 400:  # keep the server's reason (e.g. "exceeds the available context size")
+                        raise RuntimeError(f"HTTP {r.status_code} from {p.id}: {r.text[:400]}")
+                    data = r.json()
+                    m, u, got = data["choices"][0]["message"], data.get("usage") or {}, None
             if p.trust != "local":
                 cost += router.record_spend(p, u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
-            m = data["choices"][0]["message"]
             calls = m.get("tool_calls") or []
             msgs.append({k: v for k, v in m.items() if k in ("role", "content", "tool_calls")})
             if not calls:
-                return Result(m.get("content") or "", p.id, cost, turn)
+                res = Result(m.get("content") or "", p.id, cost, turn)
+                res.streamed = bool(got and got.forwarded_all)
+                return res
             used = (u.get("prompt_tokens") or _tokens(msgs[:-1]) + schema_tokens) + _tokens(msgs[-1])
             for tc in calls:
                 try:

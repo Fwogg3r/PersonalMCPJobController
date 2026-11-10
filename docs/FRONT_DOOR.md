@@ -51,7 +51,7 @@ Every routed request is logged (rule, tier, candidates, provider, fallbacks, tur
 
 ## Streaming
 
-`stream: true` returns Server-Sent Events in OpenAI's chunk format ending with `data: [DONE]`. pmjc sends the role chunk, then (if `front_door.stream_progress` is on) short progress lines such as `_calling web_search..._`, then the whole answer once it is ready. A comment line (`: keep-alive`) goes out every 10 seconds while waiting so mobile clients don't time out.
+`stream: true` returns Server-Sent Events in OpenAI's chunk format ending with `data: [DONE]`. pmjc sends the role chunk, then (if `front_door.stream_progress` is on) short progress lines such as `_calling web_search..._`, then the answer. With an OpenAI-compatible provider (LM Studio and similar, provider option `stream: true`) the answer streams as the model writes it, the model's thinking streams per `front_door.reasoning`, and while the model is still reading a long prompt a line such as `_model reading the prompt (~12k tokens, ~40% by past speed)… 30s_` goes out every `router.local_start_notice_seconds`; with a provider `extra.progress_log` pointing at LM Studio's server-log folder (`~/.lmstudio/server-logs`) the percent is LM Studio's own. Other providers send the whole answer once it is ready. Every model call is logged (`pmjc completions`: prompt and cached tokens, tools sent, time to first token, output tokens and speed, errors; never message text). A comment line (`: keep-alive`) goes out every 10 seconds while waiting so mobile clients don't time out.
 
 ## Approvals
 
@@ -86,6 +86,8 @@ The settings commands need a token with the `actions` scope (or admin) and need 
 |---|---|---|
 | `enabled` | on | `false` turns `/v1` off |
 | `stream_progress` | true | progress lines before the answer |
+| `stream_answer` | true | stream the answer as the model writes it (openai_compat providers with `stream: true`); runs that read untrusted content still send the answer whole after the link check |
+| `reasoning` | field | the model's thinking: `field` (`delta.reasoning_content`, shown as a thinking block by Open WebUI, LibreChat and others), `think_tags` (`<think>…</think>` in the content), or `off` |
 | `history_turns` | 6 | earlier exchanges from the thread given to the model |
 | `max_body_bytes` | 1000000 | larger requests get 413 |
 | `rate_limit_per_minute` | 30 | per token; over the limit gets 429 |

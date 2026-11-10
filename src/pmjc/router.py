@@ -324,7 +324,8 @@ def _lms_load(p: ProviderConfig) -> list[str] | None:
     if not os.path.exists(exe):
         return None
     ctx = ["--context-length", str(p.context_tokens)] if p.context_tokens else []  # JIT loads default to a small context
-    return [exe, "load", p.model, *ctx, "-y"]
+    par = ["--parallel", str(p.parallel)] if p.parallel else []
+    return [exe, "load", p.model, *ctx, *par, "-y"]
 
 
 async def candidates(need: Need) -> list[ProviderConfig]:

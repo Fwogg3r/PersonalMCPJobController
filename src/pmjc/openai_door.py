@@ -64,7 +64,7 @@ def text_of(content) -> str:
 def _norm(s: str) -> str:
     """Assistant text as the client will echo it back: progress lines and the routing footer dropped, whitespace
     collapsed, first 500 chars."""
-    s = routing.strip_footer(s)
+    s = routing.strip_footer(re.sub(r"<think>.*?(</think>|$)", "", s, flags=re.S))
     lines = [ln for ln in s.splitlines() if not re.fullmatch(r"\s*_(calling .*\.\.\.|starting the local model.*|[^_]*… \d+s)_\s*", ln)]
     return " ".join(" ".join(lines).split())[:500]
 
@@ -206,6 +206,11 @@ def register(app: FastAPI, bearer, need) -> None:
             async def on_notice(text):
                 await queue.put(text + "\n\n")
             caller.on_notice = on_notice
+        if stream and fd.stream_answer:
+            async def on_delta(kind, text):
+                if kind == "content" or fd.reasoning != "off":
+                    await queue.put((kind, text))
+            caller.on_delta = on_delta
         started = time.time()
         cmd = chat_commands.parse(text) if fd.chat_commands else None
 
@@ -228,16 +233,18 @@ def register(app: FastAPI, bearer, need) -> None:
             from . import ask as ask_mod
             res = await ask_mod.ask(caller, text, private=private, provider_order=order, thread_id=tid,
                                     history_turns=fd.history_turns)
-            answer = res["answer"] + approvals_block(res["thread_id"], started)
+            extras = approvals_block(res["thread_id"], started)
             if res.get("route_choice"):
-                answer += route_block(res["route_choice"])
+                extras += route_block(res["route_choice"])
+            answer = res["answer"] + extras
             thread_store(key or pair_key(c.name, first_user, answer), res["thread_id"])  # (_norm ignores the footer)
             if routing.footer_enabled("v1") and not res.get("route_choice"):
-                answer += "\n\n" + routing.footer_line(res.get("provider", ""), res.get("routing"), res.get("cost_usd") or 0)
+                extras += "\n\n" + routing.footer_line(res.get("provider", ""), res.get("routing"), res.get("cost_usd") or 0)
+                answer = res["answer"] + extras
             usage = res.get("usage") or {}
             pt, ct = int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0))
-            return {"answer": answer, "thread_id": res["thread_id"],
-                    "usage": {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct}}
+            return {"answer": answer, "thread_id": res["thread_id"], "streamed": bool(res.get("streamed")),
+                    "extras": extras, "usage": {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct}}
 
         cid, created = "chatcmpl-" + secrets.token_hex(8), int(time.time())
 
@@ -255,24 +262,54 @@ def register(app: FastAPI, bearer, need) -> None:
         async def gen():
             yield _chunk(cid, created, model, {"role": "assistant", "content": ""})
             task = asyncio.ensure_future(work())
+            st = {"think": False, "nl": True}  # inside a <think> block (think_tags mode); last content ended a line
+            sent: list[str] = []  # content as the client receives it (think_tags reasoning included; _norm drops it)
+
+            def emit(item) -> str:
+                kind, txt = item if isinstance(item, tuple) else ("notice", item)
+                pre = ""
+                if kind == "reasoning" and fd.reasoning == "field":
+                    return _chunk(cid, created, model, {"reasoning_content": txt})
+                if kind == "reasoning":  # think_tags
+                    if not st["think"]:
+                        st["think"], pre = True, "<think>\n"
+                    st["nl"] = txt.endswith("\n")
+                    return _chunk(cid, created, model, {"content": pre + txt})
+                if st["think"]:
+                    st["think"], pre = False, "\n</think>\n\n"
+                if kind == "notice" and not st["nl"]:
+                    pre += "\n\n"  # a progress line after streamed text starts on its own line
+                st["nl"] = (pre + txt).endswith("\n")
+                sent.append(pre + txt)
+                return _chunk(cid, created, model, {"content": pre + txt})
+
             try:
                 while not task.done():
                     getter = asyncio.ensure_future(queue.get())
                     done, _ = await asyncio.wait({task, getter}, timeout=fd.keepalive_seconds,
                                                  return_when=asyncio.FIRST_COMPLETED)
                     if getter in done:
-                        yield _chunk(cid, created, model, {"content": getter.result()})
+                        yield emit(getter.result())
                     else:
                         getter.cancel()
                         if not done:
                             yield ": keep-alive\n\n"
                 while not queue.empty():
-                    yield _chunk(cid, created, model, {"content": queue.get_nowait()})
+                    yield emit(queue.get_nowait())
                 try:
-                    content = task.result()["answer"]
+                    r = task.result()
+                    content = r.get("extras", "") if r.get("streamed") else r["answer"]
+                    if not r.get("streamed") and not st["nl"]:
+                        content = "\n\n" + content  # interim text was streamed: the answer starts below it
                 except Exception as e:
                     content = f"pmjc error: {_errtext(e)[1]}"
+                if st["think"]:
+                    content, st["think"] = "\n</think>\n\n" + content, False
                 yield _chunk(cid, created, model, {"content": content})
+                sent.append(content)
+                if not key and not task.exception():  # new chat: key it on the reply exactly as the client got it
+                    with contextlib.suppress(Exception):
+                        thread_store(pair_key(c.name, first_user, "".join(sent)), task.result()["thread_id"])
                 yield _chunk(cid, created, model, {}, "stop")
                 yield "data: [DONE]\n\n"
             finally:

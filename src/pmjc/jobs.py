@@ -83,6 +83,8 @@ def _prune() -> None:
     s = config.load()
     db.prune(s.audit_retention_days)
     memory.prune(s.thread_retention_days)
+    from . import completions
+    completions.prune(s.audit_retention_days)
 
 
 def load_jobs() -> dict[str, Job]:
