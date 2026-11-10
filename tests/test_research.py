@@ -1,4 +1,4 @@
-"""pmjc_research (phase4/y): the quarantined research sub-run. Fake provider, fake web tools, no network."""
+"""pmjc_research (phase6/h): the quarantined research sub-run. Fake provider, fake web tools, no network."""
 from __future__ import annotations
 
 import json

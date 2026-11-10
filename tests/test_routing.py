@@ -1,4 +1,4 @@
-"""Front-door routing (phase4/ac): gpu_busy, interactive start, tiers/rules, sticky, log, footer, /v1 tiers."""
+"""Front-door routing (phase6/j): gpu_busy, interactive start, tiers/rules, sticky, log, footer, /v1 tiers."""
 from __future__ import annotations
 
 import asyncio

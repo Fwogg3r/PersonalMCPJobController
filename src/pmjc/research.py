@@ -1,4 +1,4 @@
-"""Quarantined research sub-run behind the `pmjc_research` tool (phase4/y).
+"""Quarantined research sub-run behind the `pmjc_research` tool (phase6/h).
 
 A run that read web content is tainted, so it can't make another egress call: search -> fetch -> fetch is impossible.
 The sub-run here holds nothing private (no model.md, notes, history, memory tools, browser), so letting it make more

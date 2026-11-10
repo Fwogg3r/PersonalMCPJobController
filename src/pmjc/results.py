@@ -1,4 +1,4 @@
-"""Stored tool results for paging (phase4/p).
+"""Stored tool results for paging (phase6/e).
 
 A tool result longer than the provider's cap is cut in the run and kept whole under a short handle. The model
 pages the rest with `pmjc_result_get`. Handles belong to the thread (or, with no thread, the run) that created

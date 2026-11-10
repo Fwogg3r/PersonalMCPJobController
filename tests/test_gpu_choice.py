@@ -1,4 +1,4 @@
-"""GPU busy -> ask the owner (not the cloud), jobs wait, and the sticky provider's stay / switch-back rule (phase4/ac)."""
+"""GPU busy -> ask the owner (not the cloud), jobs wait, and the sticky provider's stay / switch-back rule (phase6/j)."""
 from __future__ import annotations
 
 import json

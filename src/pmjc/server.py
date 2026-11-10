@@ -28,7 +28,7 @@ _bg: set = set()
 
 
 def _spawn_continue(aid: str, res: dict) -> None:
-    """Continue the approval's thread in the background (phase4/i); the HTTP answer doesn't wait for the model."""
+    """Continue the approval's thread in the background (phase6/c); the HTTP answer doesn't wait for the model."""
     import asyncio
     from . import ask as ask_mod
     t = asyncio.ensure_future(ask_mod.continue_after_approval(aid, res))

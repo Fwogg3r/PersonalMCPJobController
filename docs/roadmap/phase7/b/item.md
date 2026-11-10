@@ -1,0 +1,8 @@
+---
+title: Web search and browsing for local-model runs
+status: done
+links: [phase7/d]
+---
+Give runs on local models the same reach as Claude's own tools: web search (a search API connector, e.g. Brave/Tavily/SearXNG self-hosted), fetch-and-read pages (browser_read exists; add a lightweight HTTP fetch with readability), and interactive browsing through the existing browser connector. All web content is untrusted: reading it taints the run (dual-LLM rule), so follow-up actions need a fresh approved run. Pick the search backend (self-hosted SearXNG keeps it free and private) and add it to capabilities.md.
+
+Progress (2026-11-09): done. New `web` connector: web_search (up to 5 queries per call; backends SearXNG via connectors.web.searxng_url, or Brave with the key in the credential store as web.api_key; no backend by default and health says how to set one) and web_fetch (up to 5 URLs per call, plain httpx, stdlib html.parser text extraction that drops script/nav/footer and prefers main/article, 2 MB download cap, optional links). Both read scope, untrusted output, egress. SSRF guard refuses loopback/private/link-local addresses after DNS resolution on every redirect hop (connectors.web.allow_private overrides) plus connectors.web.blocked_domains. The declared-read exemption now covers web_fetch when every URL matches the job or watch read_urls/read_sites. Capabilities catalog, CAPABILITIES.md and CONNECTORS.md (SearXNG/Brave setup) updated; tests in tests/test_web.py. Interactive browsing stays with the browser connector. Residual: DNS is resolved separately from the connection, so a rebinding host could slip past the guard.

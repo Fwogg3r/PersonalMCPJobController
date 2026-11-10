@@ -1,4 +1,4 @@
-"""tool_mode select (phase4/w step 2): core tools in full, chosen connectors in full, one-line briefs for the rest,
+"""tool_mode select (phase6/g step 2): core tools in full, chosen connectors in full, one-line briefs for the rest,
 pmjc_capabilities as the loader, and the executor still deciding every call."""
 from __future__ import annotations
 

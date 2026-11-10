@@ -1,4 +1,4 @@
-"""Tool briefs and loading on demand for small-context models (provider option `tool_mode: select`, phase4/w step 2).
+"""Tool briefs and loading on demand for small-context models (provider option `tool_mode: select`, phase6/g step 2).
 
 Instead of every tool schema, a select-mode run gets: the core tools in full, the connectors picked before turn 1
 in full, and one line per remaining connector ("- ebay: Search eBay listings ... (ebay_search)"). Picked means an

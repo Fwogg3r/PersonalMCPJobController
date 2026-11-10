@@ -1,4 +1,4 @@
-"""Taint hardening (phase4/ab): writers need approval after untrusted content, declared-read URL rules, output
+"""Taint hardening (phase8/c): writers need approval after untrusted content, declared-read URL rules, output
 defanging, and the derived `sensitive` flag. No network."""
 from __future__ import annotations
 

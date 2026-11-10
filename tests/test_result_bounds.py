@@ -1,4 +1,4 @@
-"""Bounded context inside a run (phase4/p): result caps with paging handles, and the tool-less condense pass."""
+"""Bounded context inside a run (phase6/e): result caps with paging handles, and the tool-less condense pass."""
 from __future__ import annotations
 
 import json

@@ -1,7 +1,7 @@
 """Craigslist search through the public JSON feed behind the website (no key needed).
 
 UNVERIFIED: the feed is undocumented. Request parameters and the positional item layout below are best guesses
-(roadmap phase4/t); every guess lives in `map_item` and `build_params`, so a live check only needs to touch those.
+(roadmap phase7/e); every guess lives in `map_item` and `build_params`, so a live check only needs to touch those.
 """
 from __future__ import annotations
 

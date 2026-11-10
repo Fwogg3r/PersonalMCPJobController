@@ -1,4 +1,4 @@
-"""Interactive requests wait for a local host to start when local is all that's left (phase4/ac).
+"""Interactive requests wait for a local host to start when local is all that's left (phase6/j).
 The providers are fake: the local host is down at first and healthy after a short delay."""
 from __future__ import annotations
 

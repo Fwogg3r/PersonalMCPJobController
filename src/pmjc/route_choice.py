@@ -1,4 +1,4 @@
-"""GPU busy: ask the user instead of silently routing to the cloud (phase4/ac, decided 2026-11-09).
+"""GPU busy: ask the user instead of silently routing to the cloud (phase6/j, decided 2026-11-09).
 
 When the plan's first choice is a guarded local provider (`extra.skip_when_gpu_busy_percent`) and the GPU is busy, an
 interactive request does not run. It returns a notice with the choices:
