@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import time
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from ..connector import Connector, Field, Health, tool
 
@@ -42,6 +42,15 @@ def build_filter(q: dict, currency: str) -> str:
     return ",".join(parts)
 
 
+def short_url(url: str | None) -> str | None:
+    """The listing link without its tracking query (`?_skw=...&hash=...&amdata=...`, often hundreds of characters);
+    the scheme, host (marketplace domain) and `/itm/<id>` path still open the listing."""
+    if not url:
+        return None
+    p = urlsplit(url)
+    return f"{p.scheme}://{p.netloc}{p.path}" if p.scheme and p.netloc else url
+
+
 def compact(s: dict) -> dict:
     """One compact row from an item summary."""
     price, cur = _money(s.get("price"))
@@ -56,7 +65,7 @@ def compact(s: dict) -> dict:
         "condition": s.get("condition"), "buying_options": s.get("buyingOptions"),
         "seller_feedback_pct": (s.get("seller") or {}).get("feedbackPercentage"),
         "location": "/".join(x for x in (loc.get("country"), (loc.get("postalCode") or "")[:5]) if x) or None,
-        "url": s.get("itemWebUrl"),
+        "url": short_url(s.get("itemWebUrl")),
     }
     return {k: v for k, v in row.items() if v is not None}
 

@@ -99,6 +99,15 @@ async def test_filter_building_and_compaction():
     assert "image" not in rows[0] and rows[1]["price"] == 8.0
 
 
+def test_short_url_drops_tracking_query():
+    from pmjc.connectors.ebay import compact, short_url
+    long = "https://www.ebay.com/itm/227411756268?_skw=RTX+3090&hash=item34f2:g:Gx&amdata=enc%3AAQALAAAA4Of5"
+    assert short_url(long) == "https://www.ebay.com/itm/227411756268"
+    assert short_url("https://www.ebay.co.uk/itm/5?x=1") == "https://www.ebay.co.uk/itm/5"
+    assert short_url(None) is None and short_url("not a url") == "not a url"
+    assert compact({"itemId": "v1|1|0", "itemWebUrl": long})["url"] == "https://www.ebay.com/itm/227411756268"
+
+
 async def test_open_ended_price_filter():
     from pmjc.connectors.ebay import build_filter
     assert build_filter({"max_price": 30}, "USD") == "price:[..30],priceCurrency:USD"

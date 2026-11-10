@@ -105,6 +105,12 @@ Set `limitations` (what the connector can't do, prerequisites such as where an i
 3. Copy the **App ID (Client ID)** and **Cert ID (Client Secret)**, then enter them yourself: `uv run pmjc auth set ebay` or the dashboard's Connectors tab. They go to the credential store, never to a file.
 4. Optional settings under `connectors.ebay`: `marketplace` (default `EBAY_US`), `sandbox` (default false).
 
+Gotchas:
+
+- **`401 invalid_client` from `/identity/v1/oauth2/token`:** the Production keyset isn't active yet. eBay disables it until you handle Marketplace Account Deletion notifications (the **Notifications** link next to the App ID). pmjc only reads public listings with an app token and stores no eBay user data, so choose the opt-out ("not persisting eBay data"); activation can take a few minutes.
+- **`uv run pmjc auth set ebay` fails with "os error 32" (file in use):** a running pmjc (service or MCP server) locks `pmjc.exe` and uv tries to re-sync. Use `uv run --no-sync pmjc auth set ebay`.
+- **Loose keyword matches:** a search for one model also returns other models, accessories and multi-model titles. Set `category_id` (e.g. 27386 for graphics cards) and filter titles in the watch.
+
 `ebay_search` takes a list of queries (max 10) so a whole watch fits in one call; after a run reads listings it cannot make another egress call.
 
 ## Web search and page fetch (the `web` connector)
