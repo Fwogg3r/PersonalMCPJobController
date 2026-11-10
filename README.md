@@ -54,7 +54,7 @@ uv run pmjc service install   # starts at logon/boot and restarts itself; `pmjc 
 Connect your agents with the table in [Connect your agents](#connect-your-agents). For Claude Code on the same machine:
 
 ```bash
-claude mcp add pmjc -- uv run --directory "$PWD" pmjc mcp
+claude mcp add pmjc -- uv run --no-sync --directory "$PWD" pmjc mcp
 ```
 
 Optional:
@@ -127,7 +127,7 @@ How it works from any client: connect, read the first result's context header (o
 
 | Client | How |
 |---|---|
-| Claude Code (this PC) | `claude mcp add pmjc -- uv run --directory /path/to/repo pmjc mcp` |
+| Claude Code (this PC) | `claude mcp add pmjc -- uv run --no-sync --directory /path/to/repo pmjc mcp` |
 | Claude Desktop, Cursor, other stdio MCP clients | command `uv`, args `["run", "--directory", "/path/to/repo", "pmjc", "mcp"]` (see [.mcp.json.example](.mcp.json.example)) |
 | Any MCP client over HTTP | `http://127.0.0.1:8770/mcp` with header `Authorization: Bearer <token>` |
 | claude.ai / Claude mobile apps | publish pmjc through a tunnel and turn on OAuth (see [Remote access](#remote-access)) |

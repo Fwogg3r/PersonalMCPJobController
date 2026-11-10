@@ -24,7 +24,7 @@ Work through these steps in order, and confirm each check before moving on. Run 
    - Check: `uv run pmjc service status`, then `curl http://127.0.0.1:8770/api/health` returns `"ok": true` within about 30 s.
    - On Linux, also tell the user to run `loginctl enable-linger $USER` so it keeps running after they log out.
 6. **Connect yourself.**
-   - **Claude Code on the same machine:** `claude mcp add pmjc -- uv run --directory <repo path> pmjc mcp`.
+   - **Claude Code on the same machine:** `claude mcp add pmjc -- uv run --no-sync --directory <repo path> pmjc mcp`. Keep `--no-sync`: without it `uv run` re-syncs on every start, and on Windows that fails ("Connection closed") while another pmjc process holds `.venv/Scripts/pmjc.exe`. Run `uv sync` yourself after changing dependencies, with pmjc stopped.
    - **Other MCP clients:** stdio with command `uv` and args `["run", "--directory", "<repo path>", "pmjc", "mcp"]`, or HTTP at `http://127.0.0.1:8770/mcp` with a token from `uv run pmjc token create <client> --scopes sources,jobs`.
 
    Check: the client lists `pmjc_connectors`, and calling it works.
