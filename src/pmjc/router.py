@@ -6,7 +6,9 @@ down after a failure, or is unhealthy and can't be started.
 
 Local OpenAI-compatible hosts (LM Studio, Ollama, ...) are started on demand with their `start` command
 (argv, no shell; only editable in settings.yaml, never through the API), and LM Studio models are loaded
-with `lms load`. A GPU guard skips local hosts while the GPU is busy (e.g. a game is running).
+with `lms load`. A GPU guard skips local hosts while the GPU is busy (e.g. a game is running). A model that is
+already loaded with a smaller context than the provider's `context_tokens` (e.g. LM Studio's JIT load at its small
+default, started by another client) is reloaded with the right context before the run (`ensure_context`).
 """
 from __future__ import annotations
 
@@ -221,7 +223,10 @@ async def healthy(p: ProviderConfig, start: bool = True) -> bool:
         loaded = await _loaded(p)
         if loaded is not None:
             if p.model:
-                return p.model in loaded
+                if p.model not in loaded:
+                    return False
+                # Loaded with too small a context: not ready if a (background) start may reload it.
+                return not (await context_short(p) and _can_reload(p))
             if not loaded:
                 return False
             p.model = loaded[0]
@@ -243,6 +248,9 @@ async def healthy(p: ProviderConfig, start: bool = True) -> bool:
         if not models:
             return False
         p.model = models[0]  # whatever is loaded
+    if start and p.trust == "local" and p.context_tokens:
+        if await ensure_context(p) == "failed":
+            return False
     return True
 
 
@@ -316,16 +324,158 @@ async def usable(p: ProviderConfig, need: Need) -> bool:
     return False
 
 
-def _lms_load(p: ProviderConfig) -> list[str] | None:
-    """`lms load <model>` for a local LM Studio host."""
+def _lms_exe(p: ProviderConfig) -> str | None:
+    """The `lms` CLI, only for a host on this machine (it can't reach a remote LM Studio)."""
     if "127.0.0.1" not in (p.base_url or "") and "localhost" not in (p.base_url or ""):
         return None
     exe = shutil.which("lms") or os.path.expanduser("~/.lmstudio/bin/lms" + (".exe" if os.name == "nt" else ""))
-    if not os.path.exists(exe):
+    return exe if os.path.exists(exe) else None
+
+
+def _lms_load(p: ProviderConfig) -> list[str] | None:
+    """`lms load <model>` for a local LM Studio host."""
+    exe = _lms_exe(p)
+    if not exe:
         return None
     ctx = ["--context-length", str(p.context_tokens)] if p.context_tokens else []  # JIT loads default to a small context
     par = ["--parallel", str(p.parallel)] if p.parallel else []
     return [exe, "load", p.model, *ctx, *par, "-y"]
+
+
+# --- context check: a model loaded with a smaller context than the provider's context_tokens ------------------
+CONTEXT_ERRORS = ("exceed_context_size", "exceeds the available context size", "greater than the context length")
+RELOAD_BUSY_WAIT_S = 60.0  # how long to wait for another client's generation to finish before reloading anyway
+_reload_locks: dict[str, asyncio.Lock] = {}
+
+
+def context_error(text: str) -> bool:
+    """True when a host's error says the prompt didn't fit the loaded context (LM Studio's exceed_context_size_error)."""
+    t = (text or "").lower()
+    return any(e in t for e in CONTEXT_ERRORS)
+
+
+def _lms_ps(p: ProviderConfig) -> list[dict] | None:
+    """`lms ps --json`: the loaded instances (identifier, modelKey, contextLength, status, ...), None if unavailable."""
+    exe = _lms_exe(p)
+    if not exe:
+        return None
+    try:
+        flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        out = subprocess.run([exe, "ps", "--json"], capture_output=True, text=True, timeout=15,
+                             creationflags=flags).stdout
+        data = json.loads(out or "null")
+        return data if isinstance(data, list) else None
+    except Exception:
+        return None
+
+
+def _instance(rows: list[dict] | None, model: str) -> dict | None:
+    for r in rows or []:
+        if model in (r.get("identifier"), r.get("modelKey"), r.get("id")):
+            return r
+    return None
+
+
+async def loaded_context(p: ProviderConfig) -> int | None:
+    """Context length of the loaded instance of `p.model`: LM Studio's /api/v0/models `loaded_context_length`, else
+    `lms ps --json` `contextLength`. None when the model isn't loaded or the host doesn't say."""
+    if not p.model:
+        return None
+    root = p.base_url.rstrip("/").removesuffix("/v1")
+    try:
+        async with httpx.AsyncClient(timeout=5) as c:
+            r = await c.get(root + "/api/v0/models")
+            if r.status_code != 200:
+                return None
+            rows = r.json().get("data", [])
+    except Exception:
+        return None
+    m = next((m for m in rows if m.get("id") == p.model and m.get("state") == "loaded"), None)
+    if m is None:
+        return None
+    if m.get("loaded_context_length"):
+        return int(m["loaded_context_length"])
+    inst = _instance(await asyncio.to_thread(_lms_ps, p), p.model)  # older LM Studio: ask the CLI
+    n = (inst or {}).get("contextLength") or (inst or {}).get("context_length")
+    return int(n) if n else None
+
+
+async def context_short(p: ProviderConfig) -> int | None:
+    """The loaded context length when it is below `p.context_tokens`, else None."""
+    if not (p.trust == "local" and p.kind == "openai_compat" and p.model and p.context_tokens):
+        return None
+    have = await loaded_context(p)
+    return have if have is not None and have < p.context_tokens else None
+
+
+def _can_reload(p: ProviderConfig) -> bool:
+    return bool(config.load().auto_start_local and p.load_model and _lms_exe(p)
+                and (p.extra.get("load") or _lms_load(p)))
+
+
+def _busy_elsewhere(p: ProviderConfig) -> bool:
+    """`lms ps` reports the instance as working (generating, processing a prompt, queued) for some client."""
+    inst = _instance(_lms_ps(p), p.model)
+    if not inst:
+        return False
+    status = str(inst.get("status") or "").lower()
+    return bool(status and status not in ("idle", "loaded", "ready")) or bool(inst.get("queued"))
+
+
+async def ensure_context(p: ProviderConfig) -> str:
+    """Reload `p.model` when it is loaded with a smaller context than `p.context_tokens`.
+    Returns "ok" (nothing to do), "reloaded" (now at the right context), "short" (still short: reloading is off,
+    `lms` is missing, the GPU guard says busy, or pmjc has a request in flight on it; it is used as is) or "failed"
+    (the reload left the model not loaded). Another client's generation is waited for (RELOAD_BUSY_WAIT_S), and
+    unloading it while it is still busy is logged."""
+    have = await context_short(p)
+    if have is None:
+        return "ok"
+    why = f"{p.model} on {p.id} is loaded with a {have}-token context, below context_tokens {p.context_tokens}"
+    if not _can_reload(p):
+        log.warning("%s; not reloading (auto_start_local or load_model off, or no lms CLI); using it as is", why)
+        return "short"
+    thr = p.extra.get("skip_when_gpu_busy_percent")
+    if thr and not gpu_override.get() and gpu_busy(int(thr)):
+        log.warning("%s; not reloading: GPU busy", why)
+        return "short"
+    lock = _reload_locks.setdefault(p.id, asyncio.Lock())
+    async with lock:
+        have = await context_short(p)  # another task may have reloaded it while this one waited
+        if have is None:
+            return "ok" if await loaded_context(p) is not None or p.model in (await _loaded(p) or []) else "failed"
+        if _local_inflight:
+            log.warning("%s; not reloading: pmjc has %d local request(s) in flight", why, _local_inflight)
+            return "short"
+        t0 = time.monotonic()
+        while await asyncio.to_thread(_busy_elsewhere, p):
+            if time.monotonic() - t0 >= RELOAD_BUSY_WAIT_S:
+                log.warning("%s; another client is still using it after %.0f s; unloading it anyway",
+                            why, RELOAD_BUSY_WAIT_S)
+                break
+            await asyncio.sleep(3)
+        log.warning("%s; reloading it with %d tokens", why, p.context_tokens)
+        prev = _phase.get(p.id)
+        _phase[p.id] = f"reloading {p.model} with a {p.context_tokens}-token context"
+        try:
+            await asyncio.to_thread(_run, [_lms_exe(p), "unload", p.model], 120)
+            await asyncio.to_thread(_run, p.extra.get("load") or _lms_load(p), max(p.start_timeout, 300))
+        finally:
+            if prev is None:
+                _phase.pop(p.id, None)
+            else:
+                _phase[p.id] = prev
+        now = await loaded_context(p)
+        if now is None:
+            if p.model in (await _loaded(p) or []):
+                return "reloaded"  # the host doesn't report the context; trust the load command
+            log.warning("reload of %s on %s left it not loaded", p.model, p.id)
+            return "failed"
+        if now < p.context_tokens:
+            log.warning("reload of %s on %s gave a %d-token context, still below %d", p.model, p.id, now,
+                        p.context_tokens)
+            return "short"
+        return "reloaded"
 
 
 async def candidates(need: Need) -> list[ProviderConfig]:
