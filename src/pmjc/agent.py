@@ -379,6 +379,21 @@ async def _openai(p: ProviderConfig, prompt, caller, tools, system, max_turns) -
         tool_select.end(caller)
 
 
+async def _complete(c: httpx.AsyncClient, p: ProviderConfig, body, headers, caller, turn, tools_sent, schema_tokens,
+                    prompt_tokens_est):
+    """One chat completion: (message, usage, streamed call or None). Raises RuntimeError with the server's reason."""
+    with router.local_inflight() if p.trust == "local" else contextlib.nullcontext():
+        if p.stream:  # streamed: progress while the prompt is read, answer/thinking forwarded, call logged
+            got = await completions.call(c, p, body, headers, caller, turn=turn, tools_sent=tools_sent,
+                                         schema_tokens=schema_tokens, prompt_tokens_est=prompt_tokens_est)
+            return got.message, got.usage, got
+        r = await c.post(p.base_url.rstrip("/") + "/chat/completions", json=body, headers=headers)
+        if r.status_code >= 400:  # keep the server's reason (e.g. "exceeds the available context size")
+            raise RuntimeError(f"HTTP {r.status_code} from {p.id}: {r.text[:400]}")
+        data = r.json()
+        return data["choices"][0]["message"], data.get("usage") or {}, None
+
+
 async def _openai_loop(p: ProviderConfig, prompt, caller, tools, system, max_turns, ordered) -> Result:
     schema, system = tool_payload(p, tools, system, "openai", ordered)
     msgs = [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
@@ -400,26 +415,26 @@ async def _openai_loop(p: ProviderConfig, prompt, caller, tools, system, max_tur
             if schema:
                 body["tools"] = schema
             effort.apply(body, p, eff)
-            with router.local_inflight() if p.trust == "local" else contextlib.nullcontext():
-                if p.stream:  # streamed: progress while the prompt is read, answer/thinking forwarded, call logged
-                    for attempt in (1, 2):
-                        try:
-                            got = await completions.call(c, p, body, headers, caller, turn=turn, tools_sent=len(schema),
-                                                         schema_tokens=schema_tokens,
-                                                         prompt_tokens_est=_tokens(msgs) + schema_tokens)
-                            break
-                        except RuntimeError as e:
-                            if attempt == 2 or not _transient(e):
-                                raise
-                            log.warning("transient error from %s, retrying once: %s", p.id, e)
-                            await asyncio.sleep(TRANSIENT_RETRY_SECONDS)
-                    m, u = got.message, got.usage
-                else:
-                    r = await c.post(p.base_url.rstrip("/") + "/chat/completions", json=body, headers=headers)
-                    if r.status_code >= 400:  # keep the server's reason (e.g. "exceeds the available context size")
-                        raise RuntimeError(f"HTTP {r.status_code} from {p.id}: {r.text[:400]}")
-                    data = r.json()
-                    m, u, got = data["choices"][0]["message"], data.get("usage") or {}, None
+            retried_transient = retried_context = False
+            while True:
+                try:
+                    m, u, got = await _complete(c, p, body, headers, caller, turn, len(schema), schema_tokens,
+                                                _tokens(msgs) + schema_tokens)
+                    break
+                except RuntimeError as e:
+                    if not retried_transient and _transient(e):  # LM Studio's "fetch failed" engine hiccup
+                        retried_transient = True
+                        log.warning("transient error from %s, retrying once: %s", p.id, e)
+                        await asyncio.sleep(TRANSIENT_RETRY_SECONDS)
+                        continue
+                    # A local model loaded with too small a context (e.g. a JIT load by another client): reload it
+                    # with the provider's context_tokens and retry once.
+                    if retried_context or p.trust != "local" or not router.context_error(str(e)):
+                        raise
+                    if await router.ensure_context(p) != "reloaded":
+                        raise
+                    retried_context = True
+                    log.warning("%s: prompt exceeded the loaded context; reloaded the model, retrying once", p.id)
             if p.trust != "local":
                 cost += router.record_spend(p, u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
             calls = m.get("tool_calls") or []
