@@ -29,6 +29,9 @@ def payload_hash(tool: str, args: dict) -> str:
     return hashlib.sha256(json.dumps([tool, args], sort_keys=True, default=str).encode()).hexdigest()
 
 
+AUTO_EGRESS_CAP = 30  # egress calls at level `auto` per run after it read untrusted content; then each one asks
+CONTEXT_TOOLS = {"pmjc_context", "pmjc_memory_get", "pmjc_memory_search", "pmjc_contact_find", "pmjc_capabilities",
+                 "pmjc_connectors"}  # the owner's own standing context: private, but labelled "context", not "pmjc"
 DECLARED_READ_TOOLS = {"browser_read", "browser_extract", "web_fetch"}  # read tools whose url(s) the owner may fix in advance
 
 
@@ -89,7 +92,12 @@ def _remember_urls(caller: Caller, args: dict, res: Any) -> None:
 
 
 def run_flags(caller: Caller) -> str:
-    return f"untrusted={int(caller.untrusted)} sensitive={int(caller.sensitive)}"
+    out = f"untrusted={int(caller.untrusted)} sensitive={int(caller.sensitive)}"
+    if caller.sensitive_from:
+        out += " from=" + ",".join(sorted(caller.sensitive_from))
+    if caller.auto_egress:
+        out += f" auto_egress={caller.auto_egress}"
+    return out
 
 
 def audit_run(caller: Caller, what: str) -> None:
@@ -142,10 +150,10 @@ async def _call_tool(caller: Caller, name: str, args: dict | None, reason: str) 
     if t is None:
         raise Denied(f"unknown tool {name}")
     settings = config.load()
-    level = levels.effective(name, t.level, settings.tool_levels, set(settings.auto_approve) | set(caller.auto_approve))
+    level = levels.for_tool(t, settings, caller.auto_approve)
     if level == "off":
         db.audit(caller.name, name, payload_hash(name, args), "denied", "tool is off")
-        raise Denied(f"{name} is turned off in pmjc's settings (tool_levels)")
+        raise Denied(f"{name} is turned off in pmjc's settings (tool_levels or group_levels)")
     if name == shell.TOOL:  # approved shell-command fallback: gate and fix the effective limits before hashing
         why = shell.check_proposal(caller)
         if why:
@@ -173,13 +181,24 @@ async def _call_tool(caller: Caller, name: str, args: dict | None, reason: str) 
         h = payload_hash(name, args)
     quarantined_ok = caller.quarantine and not caller.sensitive  # research sub-run that still holds nothing private
     if t.egress and caller.untrusted and not quarantined_ok and not declared_read(caller, name, args):
-        db.audit(caller.name, name, h, "denied", "egress after untrusted content")
-        raise Denied(f"{name} sends data off the machine and this run has read untrusted content; "
-                     "start a fresh run or ask the user")
+        if level != "auto":  # levels.for_tool only lets fixed-host egress tools be `auto`
+            db.audit(caller.name, name, h, "denied", "egress after untrusted content")
+            raise Denied(f"{name} sends data off the machine and this run has read untrusted content; "
+                         "start a fresh run or ask the user")
+        # `auto` egress after taint: arguments only reach the service's own host, whose logs a third party can't read.
+        # Still ask when the run holds private data from a group that isn't low-risk, or after too many such calls.
+        other = caller.sensitive_from - {t.group, "context"} - levels.harmless_groups(settings)
+        if other:
+            return await request_approval(caller, name, args, reason or (
+                "sends a query off the machine after the run read private data from " + ", ".join(sorted(other))))
+        if caller.auto_egress >= AUTO_EGRESS_CAP:
+            return await request_approval(caller, name, args, reason or
+                                          f"more than {AUTO_EGRESS_CAP} automatic searches in one run")
+        caller.auto_egress += 1
     if t.writes_state and caller.untrusted:  # laundering guard: a run that read third-party content can't write trusted state
         return await request_approval(caller, name, args, reason or "writes durable state after the run read untrusted content")
     granted = None  # id of the run grant that covers this call (pmjc.grants)
-    if t.scope == "act":
+    if t.scope == "act" and level != "auto":  # `auto`: no approval and no repeat re-ask, tainted or not
         # same act, same payload, same thread: the user decides again (not for repeatable remote-control acts)
         repeat = not t.repeatable and memory.act_done(caller.thread_id, name, h)
         hard = levels.hard_floor(name)  # shell and settings tools: always approved, even at the CLI
@@ -201,6 +220,7 @@ async def _call_tool(caller: Caller, name: str, args: dict | None, reason: str) 
             _route(res, caller.thread_id)
         if t.private_output and not (caller.quarantine and name == results.PAGE_TOOL):  # a quarantined run's own paging
             caller.sensitive = True  # derived and fail-closed: only tools declared public-web leave it alone
+            caller.sensitive_from.add("context" if name in CONTEXT_TOOLS else (t.group or t.connector))
         _remember_urls(caller, args, res)  # before the taint below: URLs the model chose while still clean
         if t.untrusted_output:
             caller.untrusted = True  # taint is derived, not declared

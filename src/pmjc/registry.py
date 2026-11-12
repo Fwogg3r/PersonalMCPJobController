@@ -45,6 +45,8 @@ class ToolSpec:
     private_output: bool = True  # result may hold the user's private data (False: public-web results)
     level: str | None = None  # shipped permission level (pmjc.levels); None = ask
     repeatable: bool = False  # idempotent remote-control act (skip, pause): repeating it in a thread is not re-asked
+    fixed_host: bool = False  # egress only to the service's own fixed host (can be `auto` after taint)
+    group: str = ""  # tool group (pmjc.levels.GROUPS): default permission level, owner's group_levels
 
     @property
     def mcp_scope(self) -> str:
@@ -158,7 +160,7 @@ class Registry:
         unless `include_off` (the executor uses that to refuse them by name)."""
         out: list[ToolSpec] = []
         seen: set[str] = set()
-        tool_levels = {} if include_off else config.load().tool_levels
+        s = None if include_off else config.load()
         for c in self.connectors.values():
             if not include_unconfigured and not c.configured():
                 continue
@@ -168,7 +170,9 @@ class Registry:
                     log.warning("duplicate tool name %s in %s; skipped", name, c.id)
                     continue
                 seen.add(name)
-                if tool_levels and levels.configured(name, tool_levels) == "off":
+                if s and (s.tool_levels or s.group_levels) and levels.effective(
+                        name, meta.get("level"), s.tool_levels, (), meta.get("group") or c.group or c.type_id,
+                        s.group_levels) == "off":
                     continue
                 raw = inspect.getdoc(fn) or ""
                 if c.instance:
@@ -180,7 +184,9 @@ class Registry:
                                     writes_state=meta.get("writes_state", False),
                                     private_output=meta.get("private_output", True),
                                     level=meta.get("level"),
-                                    repeatable=meta.get("repeatable", False)))
+                                    repeatable=meta.get("repeatable", False),
+                                    fixed_host=meta.get("fixed_host", False),
+                                    group=meta.get("group") or c.group or c.type_id))
         return out
 
     def tool(self, name: str) -> ToolSpec | None:

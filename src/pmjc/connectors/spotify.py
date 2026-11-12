@@ -67,6 +67,7 @@ def _item(o: dict | None) -> dict | None:
 
 class Spotify(OAuth2Mixin, Connector):
     id = "spotify"
+    group = "music"
     effort_hint = "low"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ["spotify", "music", "song", "songs", "track", "playlist", "album", "artist", "queue", "skip", "pause",
                "play", "playing", "volume", "shuffle", "podcast"]
@@ -173,7 +174,7 @@ class Spotify(OAuth2Mixin, Connector):
         return {"current": _item(d.get("currently_playing")),
                 "queue": [_item(x) for x in (d.get("queue") or [])[:max(1, min(limit, 50))]]}
 
-    @tool(scope="read", untrusted_output=True, egress=True)
+    @tool(scope="read", untrusted_output=True, egress=True, fixed_host=True)
     async def spotify_search(self, queries: list[str], type: str = "track", limit: int = 5) -> list[dict]:
         """Search the Spotify catalog; up to 5 queries in ONE call (after reading results a run can't search again).
         type: track, album, artist, playlist, show or episode. Returns uris for spotify_play / spotify_queue /
@@ -226,37 +227,37 @@ class Spotify(OAuth2Mixin, Connector):
 
     # ---- playback: no lasting effect, ids only -> auto_clean, repeatable ----
 
-    @tool(scope="act", level="auto_clean", repeatable=True)
+    @tool(scope="act", repeatable=True)
     async def spotify_pause(self, device_id: str | None = None) -> dict:
         """Pause playback."""
         await self._api("PUT", "/me/player/pause", {"device_id": self._device(device_id)})
         return {"ok": True}
 
-    @tool(scope="act", level="auto_clean", repeatable=True)
+    @tool(scope="act", repeatable=True)
     async def spotify_resume(self, device_id: str | None = None) -> dict:
         """Resume playback where it stopped. To start something specific use spotify_play."""
         await self._api("PUT", "/me/player/play", {"device_id": self._device(device_id)})
         return {"ok": True}
 
-    @tool(scope="act", level="auto_clean", repeatable=True)
+    @tool(scope="act", repeatable=True)
     async def spotify_next(self, device_id: str | None = None) -> dict:
         """Skip to the next track."""
         await self._api("POST", "/me/player/next", {"device_id": self._device(device_id)})
         return {"ok": True}
 
-    @tool(scope="act", level="auto_clean", repeatable=True)
+    @tool(scope="act", repeatable=True)
     async def spotify_previous(self, device_id: str | None = None) -> dict:
         """Go back to the previous track."""
         await self._api("POST", "/me/player/previous", {"device_id": self._device(device_id)})
         return {"ok": True}
 
-    @tool(scope="act", level="auto_clean", repeatable=True)
+    @tool(scope="act", repeatable=True)
     async def spotify_seek(self, position_ms: int, device_id: str | None = None) -> dict:
         """Jump to a position in the current track, in milliseconds (past the end skips to the next track)."""
         await self._api("PUT", "/me/player/seek", {"position_ms": max(0, int(position_ms)), "device_id": self._device(device_id)})
         return {"ok": True}
 
-    @tool(scope="act", level="auto_clean", repeatable=True)
+    @tool(scope="act", repeatable=True)
     async def spotify_volume(self, volume_percent: int, device_id: str | None = None) -> dict:
         """Set the volume, 0-100 (capped at the owner's max_volume option). Some devices (phones, some speakers)
         don't allow remote volume."""
@@ -265,13 +266,13 @@ class Spotify(OAuth2Mixin, Connector):
         await self._api("PUT", "/me/player/volume", {"volume_percent": v, "device_id": self._device(device_id)})
         return {"ok": True, "volume_percent": v}
 
-    @tool(scope="act", level="auto_clean", repeatable=True)
+    @tool(scope="act", repeatable=True)
     async def spotify_shuffle(self, state: bool, device_id: str | None = None) -> dict:
         """Turn shuffle on or off."""
         await self._api("PUT", "/me/player/shuffle", {"state": "true" if state else "false", "device_id": self._device(device_id)})
         return {"ok": True, "shuffle": bool(state)}
 
-    @tool(scope="act", level="auto_clean", repeatable=True)
+    @tool(scope="act", repeatable=True)
     async def spotify_repeat(self, state: str, device_id: str | None = None) -> dict:
         """Set repeat: track, context (the album/playlist) or off."""
         if state not in {"track", "context", "off"}:
@@ -279,13 +280,13 @@ class Spotify(OAuth2Mixin, Connector):
         await self._api("PUT", "/me/player/repeat", {"state": state, "device_id": self._device(device_id)})
         return {"ok": True, "repeat": state}
 
-    @tool(scope="act", level="auto_clean", repeatable=True)
+    @tool(scope="act", repeatable=True)
     async def spotify_transfer(self, device_id: str, play: bool = True) -> dict:
         """Move playback to another device (device_id from spotify_devices); play=true starts it there."""
         await self._api("PUT", "/me/player", json={"device_ids": [_check(device_id, DEVICE, "device_id")], "play": bool(play)})
         return {"ok": True}
 
-    @tool(scope="act", level="auto_clean", repeatable=True)
+    @tool(scope="act", repeatable=True)
     async def spotify_queue(self, uris: list[str], device_id: str | None = None) -> dict:
         """Add spotify:track/episode URIs (from spotify_search, playlists, history) to the play queue, in order (max 20).
         Sends only ids, so it still works (with approval) after the run read track names. To queue by song name,
@@ -296,7 +297,7 @@ class Spotify(OAuth2Mixin, Connector):
             await self._api("POST", "/me/player/queue", {"uri": x, "device_id": dev})
         return {"ok": True, "queued": len(u)}
 
-    @tool(scope="act", level="auto_clean", untrusted_output=True, egress=True)
+    @tool(scope="act", untrusted_output=True, egress=True, fixed_host=True)
     async def spotify_queue_search(self, queries: list[str], device_id: str | None = None) -> dict:
         """Queue songs by name: each query (e.g. "Bohemian Rhapsody Queen") queues its top track match, in order.
         Put every song in ONE call (max 5): afterwards the run has read track names and can't search again.
@@ -313,7 +314,7 @@ class Spotify(OAuth2Mixin, Connector):
                 missing.append(q)
         return {"queued": queued, "not_found": missing}
 
-    @tool(scope="act", level="auto_clean", repeatable=True)
+    @tool(scope="act", repeatable=True)
     async def spotify_play(self, uris: list[str] | None = None, context_uri: str | None = None, offset: int = 0,
                            device_id: str | None = None) -> dict:
         """Start playing now, replacing what plays: either `uris` (spotify:track/episode URIs, max 20) or
@@ -332,7 +333,7 @@ class Spotify(OAuth2Mixin, Connector):
         await self._api("PUT", "/me/player/play", {"device_id": self._device(device_id)}, json=body)
         return {"ok": True}
 
-    @tool(scope="act", level="auto_clean", untrusted_output=True, egress=True)
+    @tool(scope="act", untrusted_output=True, egress=True, fixed_host=True)
     async def spotify_play_search(self, query: str, type: str = "track", device_id: str | None = None) -> dict:
         """Play the top match for a name now, replacing what plays. type: track, album, playlist or artist
         (e.g. "Abbey Road" type=album). Returns what started."""
@@ -362,7 +363,7 @@ class Spotify(OAuth2Mixin, Connector):
         await self._api("DELETE", "/me/library", {"uris": ",".join(u)})
         return {"ok": True, "removed": len(u)}
 
-    @tool(scope="act", egress=True)  # shared and collaborative playlists are visible to other people
+    @tool(scope="act", egress=True, fixed_host=True, level="ask")  # shared and collaborative playlists are visible to other people
     async def spotify_playlist_add(self, playlist_id: str, uris: list[str], position: int | None = None) -> dict:
         """Add spotify:track/episode URIs (max 20) to a playlist the owner owns or collaborates on. playlist_id comes
         from spotify_playlists; position (0-based) inserts instead of appending."""
@@ -373,7 +374,7 @@ class Spotify(OAuth2Mixin, Connector):
         d = await self._api("POST", f"/playlists/{pid}/items", json=body)
         return {"ok": True, "added": len(body["uris"]), "snapshot_id": d.get("snapshot_id")}
 
-    @tool(scope="act", egress=True)
+    @tool(scope="act", egress=True, fixed_host=True, level="ask")
     async def spotify_playlist_remove(self, playlist_id: str, uris: list[str]) -> dict:
         """Remove every occurrence of these spotify:track/episode URIs (max 20) from a playlist the owner owns."""
         pid = _check(playlist_id, ID, "playlist_id")
@@ -381,7 +382,7 @@ class Spotify(OAuth2Mixin, Connector):
         d = await self._api("DELETE", f"/playlists/{pid}/items", json={"items": [{"uri": x} for x in u]})
         return {"ok": True, "removed": len(u), "snapshot_id": d.get("snapshot_id")}
 
-    @tool(scope="act", egress=True)
+    @tool(scope="act", egress=True, fixed_host=True, level="ask")
     async def spotify_playlist_create(self, name: str, description: str = "", public: bool = False) -> dict:
         """Create a playlist for the owner (private unless the owner enabled public_playlists). Add songs with
         spotify_playlist_add."""

@@ -74,7 +74,8 @@ TOOL_NAME = re.compile(r"^[a-zA-Z0-9_]{1,64}$")
 
 def tool(fn: Callable | None = None, *, scope: Scope = "act", name: str | None = None,
          untrusted_output: bool = False, egress: bool = False, writes_state: bool = False,
-         private_output: bool = True, level: str | None = None, repeatable: bool = False):
+         private_output: bool = True, level: str | None = None, repeatable: bool = False,
+         group: str | None = None, fixed_host: bool = False):
     """Mark a connector method as a tool. Fail-closed defaults:
 
     scope="act" (default) means the call changes something outside pmjc (sends, posts, buys, switches);
@@ -88,11 +89,14 @@ def tool(fn: Callable | None = None, *, scope: Scope = "act", name: str | None =
       memory. Opt in on every new tool of that kind; mounted MCP tools are `act` and need approval anyway.
     private_output=False: the result is public-web data (search, fetch, weather), not the user's private data.
       The default is True (fail-closed): a run that calls such a tool is marked `sensitive` (Caller.sensitive).
-    level: the shipped permission level (pmjc.levels: off | always_ask | ask | auto_clean); None = ask. The owner's
-      `tool_levels` and `auto_approve` settings override it. Use always_ask for tools that send free text to other
+    level: the shipped permission level (pmjc.levels: off | always_ask | ask | auto_clean | auto); None = the
+      group's default. The owner's `tool_levels`, `auto_approve` and `group_levels` settings override it. Use always_ask for tools that send free text to other
       people, spend money or click on the web; auto_clean only for act tools with no lasting or outside effect.
     repeatable=True: an idempotent remote-control act (pause, next track) whose repeat in the same thread is
       expected, so the repeat ledger doesn't ask again. All other rules (taint, levels, grants) still apply.
+    group: the tool's group (pmjc.levels.GROUPS) when it differs from its connector's `group`.
+    fixed_host=True: an egress tool whose arguments only ever reach the service's own fixed host (a search API), never
+      a URL or host the model picks. Only such tools can run at level `auto` after the run read untrusted content.
     """
     def wrap(f: Callable) -> Callable:
         n = name or f.__name__
@@ -102,7 +106,8 @@ def tool(fn: Callable | None = None, *, scope: Scope = "act", name: str | None =
             raise ValueError(f"tool {n!r}: level must be one of {LEVELS}")
         f.__pmjc_tool__ = {"scope": scope, "name": n, "untrusted_output": untrusted_output, "egress": egress,
                            "writes_state": writes_state, "private_output": private_output, "level": level,
-                           "repeatable": repeatable}
+                           "repeatable": repeatable, "group": group,
+                           "fixed_host": fixed_host}
         return f
     return wrap(fn) if fn else wrap
 
@@ -140,6 +145,9 @@ class Connector:
     # How hard a reasoning model should think for requests that use this connector (off | low | medium | high), when
     # the provider's thinking.policy is adaptive; None means medium. The owner overrides it in router.connector_effort.
     effort_hint: str | None = None
+    # The tool group (pmjc.levels.GROUPS) its tools belong to unless a tool declares its own; it gives their default
+    # permission level. Empty means the connector type id (an unknown group defaults to `ask`).
+    group: str = ""
 
     def __init__(self) -> None:
         self._http: httpx.AsyncClient | None = None
@@ -234,6 +242,7 @@ class Connector:
             "configured": self.configured(), "channel": self.is_channel,
             "tools": [{"name": m["name"], "scope": m["scope"], "egress": m["egress"], "untrusted_output": m["untrusted_output"],
                        "writes_state": m.get("writes_state", False), "private_output": m.get("private_output", True),
+                       "group": m.get("group") or self.group or self.type_id, "level": m.get("level"),
                        "doc": inspect.getdoc(fn) or ""} for m, fn in self.tools()],
             "event_sources": [m for m, _ in self.event_sources()],
         }

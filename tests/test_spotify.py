@@ -67,22 +67,25 @@ def agent(thread="t1"):
 async def test_flags():
     from pmjc import registry
     reg = registry.reload()
-    want = {  # name: (scope, untrusted_output, egress, level, repeatable)
-        "spotify_now_playing": ("read", True, False, None, False),
-        "spotify_devices": ("read", True, False, None, False),
-        "spotify_search": ("read", True, True, None, False),
-        "spotify_next": ("act", False, False, "auto_clean", True),
-        "spotify_volume": ("act", False, False, "auto_clean", True),
-        "spotify_queue": ("act", False, False, "auto_clean", True),
-        "spotify_queue_search": ("act", True, True, "auto_clean", False),
-        "spotify_play_search": ("act", True, True, "auto_clean", False),
-        "spotify_save": ("act", False, False, None, False),
-        "spotify_playlist_add": ("act", False, True, None, False),
-        "spotify_playlist_create": ("act", False, True, None, False),
+    from pmjc import config, levels
+    s = config.load()
+    want = {  # name: (scope, untrusted_output, egress, repeatable, effective level)
+        "spotify_now_playing": ("read", True, False, False, "auto"),
+        "spotify_devices": ("read", True, False, False, "auto"),
+        "spotify_search": ("read", True, True, False, "auto"),
+        "spotify_next": ("act", False, False, True, "auto"),
+        "spotify_volume": ("act", False, False, True, "auto"),
+        "spotify_queue": ("act", False, False, True, "auto"),
+        "spotify_queue_search": ("act", True, True, False, "auto"),
+        "spotify_play_search": ("act", True, True, False, "auto"),
+        "spotify_save": ("act", False, False, False, "auto"),
+        "spotify_playlist_add": ("act", False, True, False, "ask"),  # shared playlists: overrides the music group
+        "spotify_playlist_create": ("act", False, True, False, "ask"),
     }
     for name, flags in want.items():
         t = reg.tool(name)
-        assert (t.scope, t.untrusted_output, t.egress, t.level, t.repeatable) == flags, name
+        assert t.group == "music", name
+        assert (t.scope, t.untrusted_output, t.egress, t.repeatable, levels.for_tool(t, s)) == flags, name
 
 
 async def test_scopes_public_only_when_enabled():
@@ -106,19 +109,40 @@ async def test_skip_runs_without_approval_and_repeats():
     assert calls[0].headers["authorization"] == "Bearer tok"
 
 
-async def test_tainted_run_needs_approval_and_cannot_search():
+async def test_music_group_runs_after_external_context():
     from pmjc import executor
     calls = []
-    _conn(_server(calls))
+    _conn(_server(calls, {"song a": [_track(T1)]}))
     a = agent()
     np = await executor.call_tool(a, "spotify_now_playing", {})
     assert np["item"]["uri"] == T1 and a.untrusted
-    r = await executor.call_tool(a, "spotify_next", {})
+    assert await executor.call_tool(a, "spotify_next", {}) == {"ok": True}  # group music is `auto`: no approval
+    r = await executor.call_tool(a, "spotify_queue_search", {"queries": ["song a"]})  # fixed-host egress after taint
+    assert [x["uri"] for x in r["queued"]] == [T1] and a.auto_egress == 1
+    with pytest.raises(executor.Denied):  # playlist writes override the group to `ask`: the old egress rule applies
+        await executor.call_tool(a, "spotify_playlist_add", {"playlist_id": "p1", "uris": [T2]})
+
+
+async def test_music_auto_egress_asks_when_run_holds_other_private_data():
+    from pmjc import executor
+    _conn(_server([]))
+    a = agent()
+    await executor.call_tool(a, "spotify_now_playing", {})
+    a.sensitive_from.add("email_calendar")  # e.g. the run read a mail
+    r = await executor.call_tool(a, "spotify_queue_search", {"queries": ["x"]})
     assert r["status"] == "pending_approval"
-    with pytest.raises(executor.Denied):
+    assert await executor.call_tool(a, "spotify_next", {}) == {"ok": True}  # no data leaves: still automatic
+
+
+async def test_owner_group_level_tightens_music():
+    from pmjc import config, executor
+    s = config.load(); s.group_levels = {"music": "ask"}; config.save(s)
+    _conn(_server([]))
+    a = agent()
+    await executor.call_tool(a, "spotify_now_playing", {})
+    assert (await executor.call_tool(a, "spotify_next", {}))["status"] == "pending_approval"
+    with pytest.raises(executor.Denied):  # back to the old egress rule
         await executor.call_tool(a, "spotify_queue_search", {"queries": ["x"]})
-    r = await executor.call_tool(a, "spotify_queue", {"uris": [T2]})  # ids only: still possible, with approval
-    assert r["status"] == "pending_approval"
 
 
 async def test_queue_search_one_call():

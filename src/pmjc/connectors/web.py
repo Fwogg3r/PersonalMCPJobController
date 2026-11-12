@@ -158,6 +158,7 @@ def host_blocked(host: str, blocked: list[str]) -> bool:
 
 class Web(Connector):
     id = "web"
+    group = "web"
     effort_hint = "medium"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ['search', 'look up', 'lookup', 'google it', 'web', 'internet', 'online', 'fetch', 'read page', 'article', 'news']  # request words that select this connector (tool_mode: select)
     name = "Web search and page fetch"
