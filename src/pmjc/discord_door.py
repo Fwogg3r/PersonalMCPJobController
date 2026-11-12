@@ -39,7 +39,8 @@ DDL = "CREATE TABLE IF NOT EXISTS discord_door (channel_id TEXT PRIMARY KEY, thr
 PREFS_DDL = "CREATE TABLE IF NOT EXISTS discord_door_prefs (channel_id TEXT PRIMARY KEY, prefs TEXT)"
 BUTTON_PREFIX = "pmjc:"
 FRIENDS_NOTE = ("You are talking to your owner through Discord. To message someone else you can use discord_dm (sent "
-                "AS THE BOT, only to people who share a server with it) or pmjc_handoff (a one-tap link so the owner "
+                "AS THE BOT, only to people who share a server with it; pass contact=<the name the owner used>, it "
+                "finds the person in the bot's servers itself, so don't ask for user ids) or pmjc_handoff (a one-tap link so the owner "
                 "sends it as themselves). Never claim to have sent something as the owner. Both are act tools, so the "
                 "owner approves each one.")
 

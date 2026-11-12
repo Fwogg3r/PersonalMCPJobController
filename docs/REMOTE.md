@@ -68,7 +68,7 @@ The Discord front door lets you talk to pmjc from the Discord app on any device.
 
 1. **Make a server** just for you (Discord → "+" → Create My Own). Add a text channel such as `#pmjc`. A second channel such as `#pmjc-alerts` can take job and watch results.
 2. **Make the bot** at <https://discord.com/developers/applications> → New Application (the name is the bot's display name). Discord may show a CAPTCHA. Then on the **Bot** page:
-   - Turn on **Message Content Intent** under Privileged Gateway Intents and save. The other two intents aren't needed.
+   - Turn on **Message Content Intent** under Privileged Gateway Intents and save. Also turn on **Server Members Intent** if you want "message Emme" to find people by name in the bot's servers (`discord_members`, `discord_dm(contact=...)`). Presence Intent isn't needed.
    - Optional: turn off **Public Bot** so only you can add it. If Discord refuses, first set Installation → Install Link to None. The door ignores everyone but you either way.
    - **Reset Token** and copy it (it's shown once).
 3. **Add the bot to your server.** Open this URL with your application id (General Information → Application ID) and server id filled in, and authorize:
