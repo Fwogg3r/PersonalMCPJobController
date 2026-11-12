@@ -87,6 +87,8 @@ def score_task(task: Task, t: Transcript, approve: bool | None = None) -> list[C
     if e.tools_called_ordered and len(e.tools_called) > 1:
         checks.append(Check("called in order " + " > ".join(e.tools_called), _subsequence(e.tools_called, live_names),
                             "saw " + ", ".join(live_names)))
+    if e.tools_called_any:
+        checks.append(Check("called one of " + ", ".join(e.tools_called_any), any(n in live_names for n in e.tools_called_any)))
     for n in e.tools_not_called:
         checks.append(Check(f"did not call {n}", n not in attempted))
     for s in e.answer_contains:

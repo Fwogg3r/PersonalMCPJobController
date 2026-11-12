@@ -1,0 +1,5 @@
+set: places
+description: Geocoding and nearby places.
+tasks:
+  - {id: pl_geocode, prompt: "Geocode the address 221 Main Street, Springfield, Illinois.", max_turns: 4, expect: {tools_called: [places_geocode]}}
+  - {id: pl_nearby, prompt: "Find cafes near Times Square in New York.", max_turns: 5, expect: {tools_called: [places_nearby]}}

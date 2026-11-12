@@ -91,7 +91,8 @@ def run_cmd(
             typer.echo("note: this uses your local GPU; unload the model afterwards (lms unload --all).", err=True)
         secrets = runner.read_secrets(chosen)
         report = asyncio.run(runner.run_eval(all_t, chosen, variants, repeat, timeout, secrets,
-                                             budget_usd if paid else None, progress=lambda s: typer.echo(s, err=True)))
+                                             budget_usd if paid else None, progress=lambda s: typer.echo(s, err=True),
+                                             checkpoint=out))
     except (tasks.TaskError, runner.EvalError) as e:
         _fail(str(e))
     typer.echo(json.dumps(report, indent=2, default=str) if json_only else runner.render_markdown(report))
@@ -99,3 +100,56 @@ def run_cmd(
         typer.echo(f"wrote {runner.save_report(report, out)}", err=True)
     if save:
         typer.echo(f"saved {runner.save_report(report, runner.default_save_path(real_home))}", err=True)
+
+
+@eval_app.command("smoke")
+def smoke_cmd(
+    provider: str = typer.Option(..., "--provider", "-p", help="A LOCAL provider id (your real data goes to the model)."),
+    connector: list[str] = typer.Option([], "--connector", "-c", help="Only these smoke sets (connector names, repeatable)."),
+    task: list[str] = typer.Option([], "--task", help="Only these task ids (repeatable)."),
+    repeat: int = typer.Option(1, "--repeat", "-n", min=1),
+    variant: list[str] = typer.Option([], "--variant", help="Compare settings: label:key=value,... (e.g. adaptive:thinking.policy=adaptive)."),
+    set_option: list[str] = typer.Option([], "--set-option", help="Provider option override for every variant."),
+    out: Optional[Path] = typer.Option(None, "--out", help="Write the full JSON report here."),
+    timeout: float = typer.Option(300, "--timeout", help="Seconds per task."),
+    show_coverage: bool = typer.Option(False, "--coverage", help="Only list real tools that have no smoke prompt."),
+):
+    """Drive every real tool with a local model: reads run for real, acts are only recorded (see docs/EVALS.md)."""
+    import json
+    from . import runner, smoke
+    have = {p.id: p for p in runner.real_providers()}
+    if provider not in have:
+        _fail(f"no such provider: {provider} (have: {', '.join(have)})")
+    p = have[provider]
+    if runner.is_paid(p):
+        _fail("the smoke test sends your real data (files, messages, playback) to the model: local providers only")
+    try:
+        if show_coverage:
+            missing = smoke.coverage(p)
+            for cid, names in sorted(missing.items()):
+                typer.echo(f"{cid}: {', '.join(sorted(names))}")
+            typer.echo(f"{sum(len(v) for v in missing.values())} tools without a smoke prompt")
+            return
+        all_t = smoke.load_tasks(connector or None)
+        if task:
+            all_t = [t for t in all_t if t.id in task]
+        if not all_t:
+            _fail("no smoke tasks match")
+        base = runner.parse_overrides(set_option)
+        variants = [runner.Variant(v.label, {**base, **v.overrides}) for v in map(runner.parse_variant, variant)]             or [runner.Variant("default", base)]
+        for v in variants:
+            runner.apply_overrides(p, v.overrides)
+        typer.echo("note: reads run against your real services; acts are recorded, never run.", err=True)
+        report = asyncio.run(runner.run_eval(all_t, [p], variants, repeat, timeout, None, None,
+                                             progress=lambda s: typer.echo(s, err=True), home=smoke.live_home,
+                                             checkpoint=out))
+    except (tasks_error() + (runner.EvalError,)) as e:
+        _fail(str(e))
+    typer.echo(runner.render_markdown(report))
+    if out:
+        typer.echo(f"wrote {runner.save_report(report, out)}", err=True)
+
+
+def tasks_error() -> tuple:
+    from . import tasks
+    return (tasks.TaskError,)

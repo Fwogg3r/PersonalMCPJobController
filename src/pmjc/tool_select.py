@@ -4,7 +4,8 @@ Instead of every tool schema, a select-mode run gets: the core tools in full, th
 in full, and one line per remaining connector ("- ebay: Search eBay listings ... (ebay_search)"). Picked means an
 alias/tag match on the request and on *trusted* thread turns, plus the thread's sticky set (connectors loaded or used
 by earlier runs of the thread). `pmjc_capabilities(task)` doubles as the loader: it marks matching connectors, whose
-schemas join the tool list from the next turn (one batch per run, so the prompt prefix stays cache-friendly).
+schemas are sent from the model's next call (at most `select_max_batches` loads per run, default 3: each load changes
+the prompt prefix, so a few keep it mostly cache-friendly while a two-connector request still works).
 
 Loading a schema grants nothing. Every call still goes through the executor (scopes, `allowed_tools`, taint,
 approvals), so a call to a tool that was never sent just runs those same checks; wrong arguments for such a tool get
@@ -23,14 +24,13 @@ from .auth import Caller
 from .config import ProviderConfig
 from .registry import ToolSpec
 
-# Always sent in full: orientation, context, threads, memory, contacts, watches and jobs, paging of clipped results.
+# Always sent in full: orientation, the tools the run prompt names (watches, jobs, research, notes, contacts), and
+# paging of clipped results. Thread, watch and job admin (list, get, cancel, close, delete) load with the pmjc
+# connector when a request mentions them: inside pmjc the run already has its thread and model.md (phase6/m).
 CORE_TOOLS = frozenset({
-    "pmjc_capabilities", "pmjc_connectors", "pmjc_context", "pmjc_result_get",
-    "pmjc_threads_recent", "pmjc_thread_get", "pmjc_thread_note", "pmjc_thread_start", "pmjc_thread_close",
-    "pmjc_memory_get", "pmjc_memory_search", "pmjc_memory_set", "pmjc_memory_delete",
-    "pmjc_contact_find", "pmjc_contact_set",
-    "pmjc_watch_start", "pmjc_watch_status", "pmjc_watch_cancel", "pmjc_watch_list", "pmjc_watch_wait",
-    "pmjc_job_create", "pmjc_jobs_list"})
+    "pmjc_capabilities", "pmjc_connectors", "pmjc_result_get", "pmjc_research",
+    "pmjc_thread_note", "pmjc_memory_search", "pmjc_memory_set", "pmjc_contact_find", "pmjc_contact_set",
+    "pmjc_watch_start", "pmjc_job_create"})
 
 BRIEF_CHARS = 100  # a connector's line body (description plus tool names) is capped at this
 DEFAULT_SHARE = 0.3  # of context_tokens
@@ -95,6 +95,30 @@ def matches(text: str, c, reg: registry.Registry | None = None) -> bool:
     return any(f" {p} " in padded for p in phrases) or any(f" {w} " in padded for w in words)
 
 
+_GENERIC = frozenset(_stem(w) for w in "check show get list status find look tell give info current mine turn off on set new make".split())
+
+
+def live_matches(task: str | None, reg: registry.Registry | None = None, limit: int = 6) -> list[ToolSpec]:
+    """Configured tools whose name or first doc line shares words with `task`, best first. The capability catalog
+    only knows shipped connectors; this finds the owner's own (command plugins, mounted MCP servers) too, so a
+    catalog entry saying "Home Assistant isn't configured" can't hide a live `home_status`. A hit in the tool's
+    name counts double; generic words ("check", "status", "off") only break ties."""
+    words = {w for w in _words(task or "") if len(w) >= 3 and w not in _STOP}
+    if not words:
+        return []
+    reg = reg or registry.get()
+    scored = []
+    for t in reg.tools():
+        if t.connector == "pmjc":
+            continue
+        name = set(_words(t.name.replace("_", " ")))
+        doc = set(_words((t.raw_doc or t.doc or "").split(".")[0]))
+        core = 2 * len((words - _GENERIC) & name) + len((words - _GENERIC) & (doc - name))
+        if core >= 2:  # generic words only break ties
+            scored.append((-(core + 0.5 * len(words & _GENERIC & name)), t.name, t))
+    return [t for _, _, t in sorted(scored)[:limit]]
+
+
 def brief_of(c, tools: list[ToolSpec]) -> str:
     """One line body for the system prompt: a short description, then the tool names, `BRIEF_CHARS` at most."""
     desc = " ".join((c.description or c.name or c.id).split())
@@ -129,7 +153,7 @@ class Selection:
     loaded: set[str] = field(default_factory=set)
     budget: int = 0
     used: int = 0  # ~tokens of loaded connectors' schemas
-    batch_done: bool = False  # the one on-demand batch of this run has been spent
+    batches: int = 0  # on-demand loads spent in this run (cap: p.select_max_batches)
     reload: bool = False
 
     # -- what is sent
@@ -154,7 +178,7 @@ class Selection:
         if not lines:
             return ""
         return ("\n\nMore tools exist but aren't loaded, to keep the prompt small. To use one, call "
-                "pmjc_capabilities(task) with a few words (its tools load for your next turn) or just call the tool "
+                "pmjc_capabilities(task) with a few words (its tools are then sent with your next call) or just call the tool "
                 "by name (arguments are checked; an error shows the schema):\n" + "\n".join(lines))
 
     # -- sizes and rules
@@ -168,6 +192,10 @@ class Selection:
 
     def connector_of(self, name: str) -> str | None:
         return next((cid for cid, ts in self.groups.items() if any(t.name == name for t in ts)), None)
+
+    @property
+    def batch_done(self) -> bool:
+        return self.batches >= max(1, self.p.select_max_batches)
 
     def take_reload(self) -> bool:
         r, self.reload = self.reload, False
@@ -186,12 +214,13 @@ class Selection:
         for e in entries:
             for need in e.get("needs") or []:
                 want |= {cid for cid, c in reg.connectors.items() if cid in self.groups and c.type_id == need}
+            want |= {cid for cid in e.get("connectors") or [] if cid in self.groups}
         want -= self.loaded
         if not want:
             return None
         if self.batch_done:
-            return {"tools_loaded": [], "note": "Tools already loaded once in this run; no more can be added. "
-                    "Call the tool you need by name (the error shows its schema), or tell the user."}
+            return {"tools_loaded": [], "note": f"No more tools can be loaded in this run (limit {self.p.select_max_batches}). "
+                    "Call the tool you need by name anyway (a wrong call shows its schema), or tell the user."}
         notes, refused = [], []
         if self.caller.untrusted:
             blocked = sorted(c for c in want if self.egress_only(c))
@@ -210,11 +239,11 @@ class Selection:
             return {"tools_loaded": [], "note": " ".join(notes)}
         self.used += self.cost(want_s)
         self.loaded |= set(want_s)
-        self.batch_done = True
+        self.batches += 1
         self.reload = True
         self._remember(want_s)
         out: dict[str, Any] = {"tools_loaded": want_s, "tool_names": sorted(t.name for c in want_s for t in self.groups[c]),
-                               "note": " ".join(notes + ["These tools can be called from your next turn."])}
+                               "note": " ".join(notes + ["Loaded: call these tools directly in your next response. No placeholder call is needed."])}
         if self.p.schema_mode == "compact":
             lims = {c: " ".join(reg.connectors[c].limitations.split()) for c in want_s if reg.connectors[c].limitations}
             if lims:

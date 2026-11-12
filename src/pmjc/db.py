@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS completions (
   id INTEGER PRIMARY KEY, ts REAL, caller TEXT, thread_id TEXT, provider TEXT, model TEXT, turn INTEGER,
   tools_sent INTEGER, schema_tokens INTEGER, prompt_tokens INTEGER, cached_tokens INTEGER, completion_tokens INTEGER,
-  reasoning_tokens INTEGER, ttft_s REAL, total_s REAL, gen_tps REAL, finish TEXT, status TEXT, error TEXT);
+  reasoning_tokens INTEGER, ttft_s REAL, total_s REAL, gen_tps REAL, finish TEXT, status TEXT, error TEXT, effort TEXT);
 CREATE INDEX IF NOT EXISTS completions_ts ON completions(ts);
 CREATE TABLE IF NOT EXISTS command_runs (
   run_id TEXT PRIMARY KEY, tool TEXT, machine TEXT, command TEXT, owner TEXT, started REAL, status TEXT,
@@ -63,6 +63,8 @@ def conn() -> sqlite3.Connection:
         for col, ddl in (("delivered_to_requester", "INTEGER DEFAULT 0"), ("waiter_seen", "REAL DEFAULT 0")):
             if col not in have:  # outcome delivered straight to the waiting MCP client; waiter heartbeat
                 c.execute(f"ALTER TABLE approvals ADD COLUMN {col} {ddl}")
+        if "effort" not in {r[1] for r in c.execute("PRAGMA table_info(completions)")}:
+            c.execute("ALTER TABLE completions ADD COLUMN effort TEXT")  # thinking level sent with the call (pmjc.effort)
         _local.c = c
     return c
 

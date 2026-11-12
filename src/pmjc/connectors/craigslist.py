@@ -81,6 +81,7 @@ def map_item(item: list, decode: dict | None = None, host: str = "www.craigslist
 
 class Craigslist(Connector):
     id = "craigslist"
+    effort_hint = "low"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ['craigslist', 'buy', 'listing', 'price', 'deal', 'for sale', 'classified']  # request words that select this connector (tool_mode: select)
     name = "Craigslist (public search feed)"
     description = "Search Craigslist posts as compact rows (title, price, location, posted, link). No key needed."

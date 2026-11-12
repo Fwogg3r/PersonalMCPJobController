@@ -1,0 +1,5 @@
+set: notifications
+description: Windows notifications.
+tasks:
+  - {id: no_current, prompt: "What notifications do I have right now?", max_turns: 4, expect: {tools_called: [notifications_current]}}
+  - {id: no_apps, prompt: "Which apps have sent me notifications on this PC?", max_turns: 4, expect: {tools_called: [notifications_apps]}}

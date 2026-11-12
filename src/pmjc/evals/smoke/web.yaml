@@ -1,0 +1,6 @@
+set: web
+description: Web search and page reading.
+tasks:
+  - {id: we_search, prompt: "Search the web for the release date of Python 3.13.", max_turns: 4, expect: {tools_called_any: [web_search, pmjc_research]}}
+  - {id: we_fetch, prompt: "Read https://example.com and tell me its heading.", max_turns: 4, expect: {tools_called: [web_fetch], answer_contains: [Example Domain]}}
+  - {id: we_research, prompt: "Research what the main differences between USB-C 3.2 and USB4 are, from at least two sources.", max_turns: 6, expect: {tools_called: [pmjc_research]}}

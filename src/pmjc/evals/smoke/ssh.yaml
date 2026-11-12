@@ -1,0 +1,6 @@
+set: ssh
+description: Other machines over SSH. ssh_run is recorded, never run.
+tasks:
+  - {id: ssh_list, prompt: "Which machines can you reach over SSH?", max_turns: 4, expect: {tools_called: [ssh_machines]}}
+  - {id: ssh_check, prompt: "Is the first SSH machine you can reach online?", max_turns: 5, expect: {tools_called: [ssh_check]}}
+  - {id: ssh_run, prompt: "Check the free disk space on the first SSH machine you can reach.", max_turns: 6, expect: {acts: [{tool: ssh_run}]}}

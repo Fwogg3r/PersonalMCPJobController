@@ -1,0 +1,6 @@
+set: lmstudio
+description: LM Studio hosts. Loading and unloading are recorded, never run.
+tasks:
+  - {id: lm_status, prompt: "Which local models are loaded in LM Studio?", max_turns: 4, expect: {tools_called: [lmstudio_status]}}
+  - {id: lm_unload, prompt: "Unload the models from LM Studio on this machine.", max_turns: 4, expect: {acts: [{tool: lmstudio_unload}]}}
+  - {id: lm_load, prompt: "Load a model in LM Studio. Check which ones exist first and pick any one that isn't loaded.", max_turns: 6, expect: {tools_called: [lmstudio_status], acts: [{tool: lmstudio_load}]}}

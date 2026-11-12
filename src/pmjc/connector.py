@@ -74,7 +74,7 @@ TOOL_NAME = re.compile(r"^[a-zA-Z0-9_]{1,64}$")
 
 def tool(fn: Callable | None = None, *, scope: Scope = "act", name: str | None = None,
          untrusted_output: bool = False, egress: bool = False, writes_state: bool = False,
-         private_output: bool = True, level: str | None = None):
+         private_output: bool = True, level: str | None = None, repeatable: bool = False):
     """Mark a connector method as a tool. Fail-closed defaults:
 
     scope="act" (default) means the call changes something outside pmjc (sends, posts, buys, switches);
@@ -91,6 +91,8 @@ def tool(fn: Callable | None = None, *, scope: Scope = "act", name: str | None =
     level: the shipped permission level (pmjc.levels: off | always_ask | ask | auto_clean); None = ask. The owner's
       `tool_levels` and `auto_approve` settings override it. Use always_ask for tools that send free text to other
       people, spend money or click on the web; auto_clean only for act tools with no lasting or outside effect.
+    repeatable=True: an idempotent remote-control act (pause, next track) whose repeat in the same thread is
+      expected, so the repeat ledger doesn't ask again. All other rules (taint, levels, grants) still apply.
     """
     def wrap(f: Callable) -> Callable:
         n = name or f.__name__
@@ -99,7 +101,8 @@ def tool(fn: Callable | None = None, *, scope: Scope = "act", name: str | None =
         if level is not None and level not in LEVELS:
             raise ValueError(f"tool {n!r}: level must be one of {LEVELS}")
         f.__pmjc_tool__ = {"scope": scope, "name": n, "untrusted_output": untrusted_output, "egress": egress,
-                           "writes_state": writes_state, "private_output": private_output, "level": level}
+                           "writes_state": writes_state, "private_output": private_output, "level": level,
+                           "repeatable": repeatable}
         return f
     return wrap(fn) if fn else wrap
 
@@ -134,6 +137,9 @@ class Connector:
     # Optional words and phrases in a request that make a `tool_mode: select` provider send this connector's tools in
     # full ("lights", "look up"); the id, name and tool names are matched too (see tool_select.py).
     aliases: list[str] = []
+    # How hard a reasoning model should think for requests that use this connector (off | low | medium | high), when
+    # the provider's thinking.policy is adaptive; None means medium. The owner overrides it in router.connector_effort.
+    effort_hint: str | None = None
 
     def __init__(self) -> None:
         self._http: httpx.AsyncClient | None = None

@@ -149,6 +149,7 @@ def rightmost_monitor_origin() -> tuple[int, int]:
 
 class Browser(Connector):
     id = "browser"
+    effort_hint = "medium"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ['browser', 'web page', 'website', 'log in', 'sign in', 'click', 'scrape']  # request words that select this connector (tool_mode: select)
     limitations = ("browser_read/extract/browse are read-only (browse can scroll, wait and expand, never type or submit). "
                    "Only browser_act can type, press keys or click submit buttons, and it needs approval. Returns page text "

@@ -1,0 +1,5 @@
+set: shopping
+description: Marketplace searches.
+tasks:
+  - {id: sh_ebay, prompt: "Search eBay for a used ThinkPad X1 Carbon.", max_turns: 4, expect: {tools_called: [ebay_search]}}
+  - {id: sh_craigslist, prompt: "Search Craigslist for a used road bike.", max_turns: 4, expect: {tools_called: [craigslist_search]}}

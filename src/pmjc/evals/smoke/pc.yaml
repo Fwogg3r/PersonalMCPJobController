@@ -1,0 +1,5 @@
+set: pc
+description: This computer's load and processes.
+tasks:
+  - {id: pc_status, prompt: "How busy is my PC right now? CPU, RAM and GPU.", max_turns: 4, expect: {tools_called: [pc_status]}}
+  - {id: pc_procs, prompt: "Which processes use the most memory?", max_turns: 4, expect: {tools_called: [pc_processes]}}

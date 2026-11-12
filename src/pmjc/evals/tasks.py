@@ -13,6 +13,7 @@
         expect:
           tools_called: [weather_forecast]
           tools_called_ordered: false                # true: tools_called must also appear in this order
+          tools_called_any: [spotify_play, spotify_play_search]   # at least one of them
           tools_not_called: [pmjc_shell_run]
           answer_contains: [rain]                    # case-insensitive substrings
           answer_not_contains: []
@@ -49,6 +50,7 @@ class Act(_Strict):
 class Expect(_Strict):
     tools_called: list[str] = Field(default_factory=list)
     tools_called_ordered: bool = False
+    tools_called_any: list[str] = Field(default_factory=list)  # at least one of these was called
     tools_not_called: list[str] = Field(default_factory=list)
     answer_contains: list[str] = Field(default_factory=list)
     answer_not_contains: list[str] = Field(default_factory=list)
@@ -99,7 +101,7 @@ def load_file(path: Path) -> TaskSet:
         seen.add(t.id)
         t.set = ts.set
         e = t.expect
-        if not (e.tools_called or e.tools_not_called or e.answer_contains or e.answer_not_contains or e.answer_regex
+        if not (e.tools_called or e.tools_called_any or e.tools_not_called or e.answer_contains or e.answer_not_contains or e.answer_regex
                 or e.acts or e.no_egress_after_taint):
             raise TaskError(f"{path.name}: task {t.id} has no expectations")
     return ts

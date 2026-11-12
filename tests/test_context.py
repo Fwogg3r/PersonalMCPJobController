@@ -124,6 +124,9 @@ async def test_thread_get_taints_the_reader():
     tid = memory.thread_new("x")
     c = agent()
     await call(c, "pmjc_thread_get", thread_id=tid)
+    assert not c.untrusted  # nothing third-party in it (more cases in test_taint_hardening)
+    memory.thread_add(tid, "watch_result", "from a stranger", trust="untrusted")
+    await call(c, "pmjc_thread_get", thread_id=tid)
     assert c.untrusted
 
 

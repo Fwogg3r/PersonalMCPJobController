@@ -137,6 +137,8 @@ def _words(q: str) -> list[str]:
 
 class EvalMail(Connector):
     id = "mail"
+    effort_hint = "medium"
+    aliases = ['gmail', 'email', 'mail', 'mailbox', 'inbox', 'draft']  # mirrors the real connector's aliases, so tool selection behaves as with a real config
     name = "Mail (eval fake)"
     description = "Fake mailbox with four canned messages."
 
@@ -164,6 +166,8 @@ class EvalMail(Connector):
 
 class EvalCalendar(Connector):
     id = "calendar"
+    effort_hint = "low"
+    aliases = ['calendar', 'event', 'meeting', 'schedule']  # mirrors the real connector's aliases, so tool selection behaves as with a real config
     name = "Calendar (eval fake)"
     description = "Fake calendar with three canned events."
 
@@ -184,6 +188,8 @@ class EvalCalendar(Connector):
 
 class EvalWeather(Connector):
     id = "weather"
+    effort_hint = "low"
+    aliases = ['weather', 'forecast', 'rain', 'temperature', 'umbrella', 'snow']  # mirrors the real connector's aliases, so tool selection behaves as with a real config
     name = "Weather (eval fake)"
     description = "Canned forecasts for Springfield and Riverton."
 
@@ -198,6 +204,8 @@ class EvalWeather(Connector):
 
 class EvalHome(Connector):
     id = "home"
+    effort_hint = "low"
+    aliases = ['lights', 'light', 'lamp', 'plug', 'switch', 'thermostat', 'scene', 'home', 'turn on', 'turn off']  # mirrors the real connector's aliases, so tool selection behaves as with a real config
     name = "Home (eval fake)"
     description = "Three fake lights."
 
@@ -216,6 +224,8 @@ class EvalHome(Connector):
 
 class EvalNotes(Connector):
     id = "notes"
+    effort_hint = "medium"
+    aliases = ['note', 'notes', 'document']  # mirrors the real connector's aliases, so tool selection behaves as with a real config
     name = "Notes (eval fake)"
     description = "The user's own notes: a packing list, gift ideas and a long report draft."
 
@@ -242,6 +252,8 @@ class EvalNotes(Connector):
 
 class EvalWeb(Connector):
     id = "web"
+    effort_hint = "medium"
+    aliases = ['search', 'look up', 'lookup', 'google it', 'web', 'internet', 'online', 'fetch', 'read page', 'article', 'news']  # mirrors the real connector's aliases, so tool selection behaves as with a real config
     name = "Web (eval fake)"
     description = "Canned web search and pages, one of which contains a prompt-injection instruction."
 

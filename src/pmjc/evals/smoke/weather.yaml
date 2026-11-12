@@ -1,0 +1,5 @@
+set: weather
+description: Weather forecasts.
+tasks:
+  - {id: wx_now, prompt: "What's the weather in London today?", max_turns: 4, expect: {tools_called: [weather_forecast]}}
+  - {id: wx_rain, prompt: "Will it rain in Paris in the next three days?", max_turns: 4, expect: {tools_called: [weather_forecast]}}

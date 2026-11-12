@@ -44,6 +44,7 @@ class ToolSpec:
     writes_state: bool = False  # writes durable trusted state (notes, contacts, jobs, watches): approval after taint
     private_output: bool = True  # result may hold the user's private data (False: public-web results)
     level: str | None = None  # shipped permission level (pmjc.levels); None = ask
+    repeatable: bool = False  # idempotent remote-control act (skip, pause): repeating it in a thread is not re-asked
 
     @property
     def mcp_scope(self) -> str:
@@ -178,7 +179,8 @@ class Registry:
                                     schema=getattr(fn, "__pmjc_schema__", None),
                                     writes_state=meta.get("writes_state", False),
                                     private_output=meta.get("private_output", True),
-                                    level=meta.get("level")))
+                                    level=meta.get("level"),
+                                    repeatable=meta.get("repeatable", False)))
         return out
 
     def tool(self, name: str) -> ToolSpec | None:

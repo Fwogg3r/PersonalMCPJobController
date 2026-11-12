@@ -210,8 +210,10 @@ def thread_get(tid: str, limit: int = 100, mark_read: bool = True) -> dict:
     acts = db.q("SELECT ts,tool FROM thread_acts WHERE thread_id=? ORDER BY ts", tid)
     if mark_read and t["unread"]:
         db.x("UPDATE threads SET unread=0, status=CASE WHEN status='updated' THEN 'open' ELSE status END WHERE id=?", tid)
+    has_untrusted = t["trust"] == "untrusted" or any(i["trust"] == "untrusted" for i in items)
     return {**{k: t[k] for k in ("id", "title", "status", "private", "created", "updated", "trust")},
-            "unread": bool(t["unread"]), "watches": watches, "acts_done": acts, "items": items}
+            "unread": bool(t["unread"]), "watches": watches, "acts_done": acts, "items": items,
+            "has_untrusted": has_untrusted}
 
 
 def _title(r: dict) -> str:

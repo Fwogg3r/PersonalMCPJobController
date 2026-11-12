@@ -294,12 +294,12 @@ def _record(p: ProviderConfig, caller, out: Call, turn, tools_sent, schema_token
     tps = round(ct / gen_s, 1) if ct and gen_s > 0.05 else None
     try:
             db.x("INSERT INTO completions(ts,caller,thread_id,provider,model,turn,tools_sent,schema_tokens,prompt_tokens,"
-             "cached_tokens,completion_tokens,reasoning_tokens,ttft_s,total_s,gen_tps,finish,status,error) "
-             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+             "cached_tokens,completion_tokens,reasoning_tokens,ttft_s,total_s,gen_tps,finish,status,error,effort) "
+             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
              time.time(), getattr(caller, "name", ""), getattr(caller, "thread_id", None), p.id, p.model or "", turn,
              tools_sent, schema_tokens, pt, cached, ct, rt,
              round(out.ttft_s, 2) if out.ttft_s is not None else None, round(out.total_s, 2), tps, out.finish,
-             status, err)
+             status, err, getattr(getattr(caller, "effort", None), "level", None))
     except Exception:
         log.debug("completion log write failed", exc_info=True)
     log.info("completion %s %s turn %s: %s prompt tok (%s cached), %s tools, first token %s, %s out tok%s, %.1fs total%s",

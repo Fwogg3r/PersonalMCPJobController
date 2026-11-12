@@ -1,0 +1,6 @@
+set: discord
+description: The Discord bot. Sends are recorded, never posted.
+tasks:
+  - {id: dc_servers, prompt: "Which Discord servers is the bot in?", max_turns: 4, expect: {tools_called: [discord_channels]}}
+  - {id: dc_read, prompt: "Read the latest messages in the first text channel of the bot's first Discord server.", max_turns: 6, expect: {tools_called: [discord_read_channel]}}
+  - {id: dc_send, prompt: "Post 'smoke test' in the first text channel of the bot's first Discord server.", max_turns: 6, expect: {acts: [{tool: discord_send, args: {content: smoke test}}]}}

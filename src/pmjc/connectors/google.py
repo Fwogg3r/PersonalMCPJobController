@@ -17,7 +17,8 @@ from ..oauth2 import OAuth2Mixin
 
 class Google(OAuth2Mixin, Connector):
     id = "google"
-    aliases = ['gmail', 'email', 'mail', 'inbox', 'calendar', 'event', 'meeting', 'schedule', 'draft']  # request words that select this connector (tool_mode: select)
+    effort_hint = "medium"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
+    aliases = ['gmail', 'email', 'mail', 'mailbox', 'inbox', 'calendar', 'event', 'meeting', 'schedule', 'draft']  # request words that select this connector (tool_mode: select)
     limitations = "Gmail and Google Calendar only. Never sends email (drafts only); can't delete mail or events."
     native_alternatives = 'a mail/calendar connector in your client that can send or edit.'
     name = "Google (Gmail + Calendar)"

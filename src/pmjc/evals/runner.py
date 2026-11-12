@@ -62,6 +62,17 @@ def apply_overrides(p: ProviderConfig, overrides: dict[str, Any]) -> ProviderCon
     for k, v in overrides.items():
         if k.startswith("extra."):
             data["extra"] = {**data.get("extra", {}), k[6:]: v}
+        elif k.startswith("thinking."):  # thinking.policy=adaptive, thinking.levels.high=xhigh
+            sub = k[9:].split(".")
+            t = data.setdefault("thinking", {})
+            if sub[0] not in config.ThinkingConfig.model_fields:
+                raise EvalError(f"unknown thinking option {sub[0]!r}")
+            if len(sub) == 2 and sub[0] == "levels":
+                t["levels"] = {**t.get("levels", {}), sub[1]: v}
+            elif len(sub) == 1:
+                t[sub[0]] = v
+            else:
+                raise EvalError(f"bad thinking option {k!r}")
         elif k in ("id", "kind", "credential", "start", "base_url", "trust"):
             raise EvalError(f"override of {k!r} is not allowed (it could point the eval at another host or credential)")
         elif k not in ProviderConfig.model_fields:
@@ -220,6 +231,9 @@ class RunResult:
     error: str = ""
     answer: str = ""
     calls: list[dict] = field(default_factory=list)
+    effort: str = ""  # thinking level the run started at, "" when the provider has no thinking control
+    effort_trace: list[str] = field(default_factory=list)  # escalations
+    reasoning_tokens: int | None = None  # from the call log, when the provider reports them
 
     @property
     def key(self) -> str:
@@ -247,9 +261,9 @@ async def _decide_approvals(task: Task, thread_id: str) -> None:
 
 
 async def run_task(task: Task, provider: ProviderConfig, secrets: dict[str, str] | None = None, variant: str = "default",
-                   repeat: int = 1, timeout: float = 600) -> RunResult:
+                   repeat: int = 1, timeout: float = 600, home=None) -> RunResult:
     r = RunResult(provider.id, variant, task.set, task.id, task.category, repeat)
-    with isolated_home(provider, secrets):
+    with (home(provider) if home is not None else isolated_home(provider, secrets)):
         reg = registry.get()
         missing = [n for n in task.requires_tools if reg.tool(n) is None]
         if missing:
@@ -263,13 +277,14 @@ async def run_task(task: Task, provider: ProviderConfig, secrets: dict[str, str]
             tr.calls.append(score.Call(name, dict(args), status))
 
         caller.on_tool = hook
-        tid = _seed_thread(task)
+        tid = _seed_thread(task) if home is None else None
         t0 = time.perf_counter()
         with metered() as m:
             try:
                 out = await asyncio.wait_for(
                     ask.ask(caller, task.prompt, provider_order=[provider.id], thread_id=tid,
-                            history_turns=len(task.thread), extra_system=fakes.EVAL_SYSTEM), timeout)
+                            history_turns=len(task.thread), extra_system="" if home is not None else fakes.EVAL_SYSTEM),
+                    timeout)
                 tr.answer = out["answer"]
                 r.cost_usd = out.get("cost_usd") or 0.0
                 r.fell_back = list(out.get("fell_back") or [])
@@ -280,7 +295,11 @@ async def run_task(task: Task, provider: ProviderConfig, secrets: dict[str, str]
                 tr.error = f"{type(e).__name__}: {e}"[:500]
         r.latency_s = time.perf_counter() - t0
         tr.turns = m.turns
-        tr.executed = list(fakes.STATE.executed)
+        if home is None:
+            tr.executed = list(fakes.STATE.executed)
+        else:
+            from . import smoke
+            tr.executed = [dict(x) for x in smoke.RECORDED]
         r.turns = m.turns
         if m.reported:
             r.tokens_in, r.tokens_out = m.tokens_in, m.tokens_out
@@ -290,6 +309,15 @@ async def run_task(task: Task, provider: ProviderConfig, secrets: dict[str, str]
         r.error = tr.error or ""
         r.answer = tr.answer[:2000]
         r.calls = [c.__dict__ for c in tr.calls]
+        e = getattr(caller, "effort", None)
+        if e is not None:
+            r.effort, r.effort_trace = e.level, list(e.trace)
+        try:
+            row = db.q("SELECT SUM(reasoning_tokens) AS rt, COUNT(*) AS n FROM completions")[0]
+            if row["n"] and row["rt"]:
+                r.reasoning_tokens = int(row["rt"])
+        except Exception:
+            pass
         return r
 
 
@@ -319,7 +347,7 @@ def estimate(tasks: list[Task], provider: ProviderConfig, repeat: int, n_variant
 # --- the whole eval ------------------------------------------------------------------------------------------
 async def run_eval(tasks: list[Task], providers: list[ProviderConfig], variants: list[Variant] | None = None,
                    repeat: int = 1, timeout: float = 600, secrets: dict[str, str] | None = None,
-                   budget_usd: float | None = None, progress=None) -> dict:
+                   budget_usd: float | None = None, progress=None, home=None, checkpoint: Path | None = None) -> dict:
     """Run every task `repeat` times on every provider x variant. Returns the report dict (rows + runs)."""
     variants = variants or [Variant()]
     for p in providers:
@@ -346,21 +374,35 @@ async def run_eval(tasks: list[Task], providers: list[ProviderConfig], variants:
                     if budget_usd is not None and spent >= budget_usd:
                         stopped = f"budget of ${budget_usd:g} reached"
                         break
-                    r = await run_task(task, p, secrets, v.label, rep, timeout)
+                    r = await run_task(task, p, secrets, v.label, rep, timeout, home=home)
                     spent += r.cost_usd
                     runs.append(r)
                     flag = "skipped (%s)" % r.skipped if r.skipped else f"score {r.score:.2f}" + (f" ERROR {r.error[:80]}" if r.error else "")
                     say(f"{key} {task.id}#{rep}: {flag}")
+                    if checkpoint is not None:  # a long run keeps what it has if it dies halfway
+                        with contextlib.suppress(Exception):
+                            save_report(_report(started, repeat, variants, runs, unavailable, spent, "partial"), checkpoint)
                 if stopped:
                     break
             if stopped:
                 break
         if stopped:
             break
+    return _report(started, repeat, variants, runs, unavailable, spent, stopped)
+
+
+def _report(started, repeat, variants, runs, unavailable, spent, stopped) -> dict:
     return {"created": started.isoformat(timespec="seconds"), "repeat": repeat,
             "variants": [{"label": v.label, "overrides": v.overrides} for v in variants],
             "rows": summarize(runs, unavailable), "runs": [r.__dict__ for r in runs],
             "spent_usd": round(spent, 5), "stopped": stopped}
+
+
+def _count(xs) -> dict:
+    out: dict = {}
+    for x in xs:
+        out[x] = out.get(x, 0) + 1
+    return out
 
 
 def summarize(runs: list[RunResult], unavailable: dict[str, str] | None = None) -> list[dict]:
@@ -380,6 +422,10 @@ def summarize(runs: list[RunResult], unavailable: dict[str, str] | None = None) 
             "passed": sum(1 for r in done if r.score >= 1.0 and not r.error),
             "mean_turns": round(sum(r.turns for r in done) / n, 2) if n else None,
             "mean_latency_s": round(sum(r.latency_s for r in done) / n, 2) if n else None,
+            "median_latency_s": round(sorted(r.latency_s for r in done)[n // 2], 2) if n else None,
+            "reasoning_tokens": sum(r.reasoning_tokens or 0 for r in done) or None,
+            "efforts": ", ".join(f"{k} {v}" for k, v in sorted(_count(r.effort for r in done if r.effort).items())),
+            "escalations": sum(1 for r in done if r.effort_trace),
             "tokens_in": sum(tin) if tin else None, "tokens_out": sum(tout) if tout else None,
             "fallbacks": sum(1 for r in done if r.fell_back),
             "errors": sum(1 for r in done if r.error),
@@ -389,6 +435,7 @@ def summarize(runs: list[RunResult], unavailable: dict[str, str] | None = None) 
         rows.append({"key": key, "provider": key.split("/")[0], "variant": key.partition("/")[2] or "default", "runs": 0,
                      "skipped": 0, "mean_score": None, "passed": 0, "mean_turns": None, "mean_latency_s": None,
                      "tokens_in": None, "tokens_out": None, "fallbacks": 0, "errors": 0, "cost_usd": 0.0,
+                     "median_latency_s": None, "reasoning_tokens": None, "efforts": "", "escalations": 0,
                      "unavailable": why})
     return rows
 
@@ -400,16 +447,19 @@ def _f(v, fmt="{}", dash="-") -> str:
 
 def render_markdown(report: dict) -> str:
     lines = [f"## Eval results ({report['created']}, repeat {report['repeat']})", "",
-             "| provider | tasks | mean score | passed | mean turns | mean latency | tokens in/out | fallbacks | errors |",
-             "|---|---|---|---|---|---|---|---|---|"]
+             "| provider | tasks | mean score | passed | mean turns | mean / median latency | tokens in/out | reasoning tok | "
+             "effort (escalations) | fallbacks | errors |",
+             "|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in report["rows"]:
         if r.get("unavailable"):
-            lines.append(f"| {r['key']} | - | unavailable: {r['unavailable']} | | | | | | |")
+            lines.append(f"| {r['key']} | - | unavailable: {r['unavailable']} | | | | | | | | |")
             continue
         tok = "-" if r["tokens_in"] is None else f"{r['tokens_in']}/{r['tokens_out']}"
         lines.append(f"| {r['key']} | {r['runs']}" + (f" (+{r['skipped']} skipped)" if r["skipped"] else "")
                      + f" | {_f(r['mean_score'], '{:.3f}')} | {r['passed']}/{r['runs']} | {_f(r['mean_turns'])} | "
-                     f"{_f(r['mean_latency_s'], '{}s')} | {tok} | {r['fallbacks']} | {r['errors']} |")
+                     f"{_f(r['mean_latency_s'], '{}s')} / {_f(r.get('median_latency_s'), '{}s')} | {tok} | "
+                     f"{_f(r.get('reasoning_tokens'))} | {r.get('efforts') or '-'} ({r.get('escalations', 0)}) | "
+                     f"{r['fallbacks']} | {r['errors']} |")
     runs = report["runs"]
     keys = [r["key"] for r in report["rows"] if not r.get("unavailable")]
     if runs and keys:

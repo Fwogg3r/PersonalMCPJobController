@@ -1,0 +1,14 @@
+---
+title: "Tool-selection fixes from the first local multistep eval: more load batches, findable pmjc_research, fake-connector aliases"
+status: done
+links: [phase6/g, phase6/h, phase6/i]
+---
+**What:** Fixes for the failures the first local `multistep` eval found (2026-11-10, Qwen3.8 27B at 64k, `tool_mode: select`, compact schemas; see phase6/h):
+1. **One load batch per run is too few.** A request that needs two connectors ("find my meeting with Dana and email her") spends the batch on the first one (calendar); every later `pmjc_capabilities` call gets "already loaded once" and the model loops on the loader until the turn limit. It never calls an unsent tool by name, even though the note tells it to. Allow a few batches (e.g. 3, cache cost accepted), or load a connector automatically when its tool is called by name.
+2. **`pmjc_research` can't be found.** It sits in the `pmjc` group, whose tags don't include "research", so a research request loads `web` instead. The model then searches and fetches directly, gets tainted after the search, and its fetches are denied. In two runs it tried to reach `pmjc_research` through `pmjc_result_get(id="pmjc_research")`. Make it a core tool, or tag it "research".
+3. **The eval's fake connectors have no `aliases`.** "email", "mailbox" and "reply" don't select the fake `mail` connector, though the real Google connector would match them. Copy the real connectors' aliases onto the fakes so the eval measures what real configs do.
+4. **Wasted turns:** dummy `pmjc_result_get` calls with made-up ids ("probe", "x") while waiting for tools to load, and `pmjc_context` plus `pmjc_thread_get` at the start of every run. Two runs of `web_two_pages` hit the turn limit this way, though the `web` tools were already loaded.
+
+Done when a rerun of `pmjc eval run -p lmstudio-local --set multistep -n 3` no longer shows these failure modes.
+
+**Done 2026-11-11.** Built: `select_max_batches` (default 3); `pmjc_research` is core; the eval fakes carry the real connectors' aliases (Google also gained "mailbox"); the loader note says to call loaded tools in the next response. A rerun showed one more cause, fixed too: `pmjc_thread_get` tainted every run that called it, even a fresh thread with nothing third-party in it, so model.md's "resume your thread" step blocked all web and mail egress. It now taints only when it returns an untrusted item or title (`has_untrusted`). Results on `multistep -n 3` (Qwen3.8 27B, 64k, select, compact): 0.69 (13/24 perfect, 89 s mean) -> 0.83 after the loader fixes (15/24, 69 s) -> 0.78 after the taint fix, with 3 of 24 runs lost to LM Studio "fetch failed" engine errors (0.89 over the other 21; 56 s mean). Research now calls `pmjc_research`; web_two_pages 3/3. What's left in that set: replying to an email the run read (phase8/p, a design question) and LM Studio's transient engine error (retried once since phase6/n).

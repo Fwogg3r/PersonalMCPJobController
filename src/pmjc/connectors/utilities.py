@@ -19,6 +19,7 @@ async def geocode(http, place: str) -> dict:
 
 class Weather(Connector):
     id = "weather"
+    effort_hint = "low"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ['weather', 'forecast', 'rain', 'temperature', 'umbrella', 'snow']  # request words that select this connector (tool_mode: select)
     limitations = 'Forecasts only (Open-Meteo); no radar, alerts or history.'
     native_alternatives = 'a weather or search connector in your client.'
@@ -53,6 +54,7 @@ class Weather(Connector):
 
 class Places(Connector):
     id = "places"
+    effort_hint = "low"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ['nearby', 'near me', 'restaurant', 'shop', 'geocode', 'address', 'place', 'map']  # request words that select this connector (tool_mode: select)
     limitations = 'OpenStreetMap data: no reviews, ratings, prices or live opening status.'
     native_alternatives = 'a maps or search connector in your client.'
@@ -95,6 +97,7 @@ class Places(Connector):
 
 class GitHub(Connector):
     id = "github"
+    effort_hint = "medium"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ['github', 'issue', 'pull request', 'repo']  # request words that select this connector (tool_mode: select)
     limitations = "Notifications, issue/PR search and comments only; what is visible depends on the token's scopes. No code access, no merging."
     native_alternatives = 'a GitHub connector or the gh CLI in your client.'

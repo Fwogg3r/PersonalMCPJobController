@@ -100,6 +100,14 @@ Pick the **most native route**: your client's own abilities first (if it can act
 - **Better if your client can:** A shopping or browser connector in your client.
 - **Workaround:** -
 
+## Music: control Spotify (play, pause, skip, queue songs, volume, devices), search, playlists, liked songs
+
+- **pmjc:** spotify_now_playing, spotify_next/previous/pause/resume/seek/volume/shuffle/repeat, spotify_queue_search (queue by name, up to 5 per call), spotify_play_search, spotify_queue / spotify_play (by URI), spotify_devices + spotify_transfer, spotify_search, spotify_playlists, spotify_playlist_add, spotify_save
+- **Needs:** spotify
+- **Limits:** Needs the owner's Spotify developer app (Client ID; redirect URI http://127.0.0.1:<port>/oauth/spotify/callback) and sign-in. Playback control needs Premium and a device with Spotify open. Names of tracks, playlists and devices are third-party text: after reading them, playback needs approval and name searches are refused, so queue every song by name in ONE spotify_queue_search call and use URIs afterwards. Library and playlist changes always ask. No lyrics, downloads or recommendations.
+- **Better if your client can:** A Spotify connector in your client, or the Spotify app.
+- **Workaround:** -
+
 ## Web research: search the web and read ordinary pages
 
 - **pmjc:** web_search (up to 5 queries per call), web_fetch (up to 5 URLs per call, readable text)

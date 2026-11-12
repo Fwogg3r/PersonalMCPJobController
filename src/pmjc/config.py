@@ -35,6 +35,33 @@ def path(*parts: str) -> Path:
     return p
 
 
+def _level(v: Any) -> Any:
+    """YAML reads a bare `off` as False (and `on` as True): thinking levels stay strings."""
+    if v is False:
+        return "off"
+    if v is True:
+        return "high"
+    return v
+
+
+def _levels_map(v: Any) -> Any:
+    return {k: _level(x) for k, x in v.items()} if isinstance(v, dict) else v
+
+
+Level = Annotated[str, BeforeValidator(_level)]
+LevelMap = Annotated[dict[str, str], BeforeValidator(_levels_map)]
+
+
+class ThinkingConfig(BaseModel):
+    """How hard a reasoning model thinks (see pmjc.effort). control none: nothing is sent, the model's own default."""
+    control: str = "none"  # none | param (top-level reasoning_effort: LM Studio) | kwargs (chat_template_kwargs)
+    policy: str = "fixed"  # fixed: always `default` | adaptive: chosen per run by rules, raised once on failure
+    default: Level = "high"  # off | low | medium | high (policy fixed, and runs with no better signal)
+    adaptive_floor: Level = "off"  # adaptive: never below this
+    escalate: bool = True  # adaptive: one level up for the rest of the run after a failure signal
+    levels: LevelMap = Field(default_factory=lambda: {"off": "none", "low": "low", "medium": "medium", "high": "high"})  # pmjc level -> server value
+
+
 class ProviderConfig(BaseModel):
     """One model provider in the routing list."""
     id: str
@@ -54,6 +81,8 @@ class ProviderConfig(BaseModel):
     schema_mode: str = "full"  # full | compact: compact sends shorter tool descriptions and schemas (small-context models)
     tool_mode: str = "all"  # all | select: select sends core tools in full plus chosen connectors, one-line briefs for the rest
     select_budget_tokens: int | None = None  # tool_mode select: cap (~tokens) on selected connectors' schemas; None: 30% of context_tokens
+    thinking: ThinkingConfig = Field(default_factory=ThinkingConfig)  # thinking effort (reasoning models)
+    select_max_batches: int = 3  # tool_mode select: on-demand loads (pmjc_capabilities) allowed per run; each one changes the prompt prefix
     max_result_chars: int | None = None  # cap on one tool result sent to the model; None: derived from context_tokens
     condense_at: float = 0.7  # condense older turns when the prompt passes this share of (context_tokens - reserve_tokens)
     reserve_tokens: int = 2048  # room kept for the model's answer
@@ -224,6 +253,8 @@ class RouterConfig(BaseModel):
     tiers: dict[str, list[str]] = Field(default_factory=dict)
     route_rules: list[RouteRule] = Field(default_factory=default_route_rules)
     sticky: bool = True  # a thread keeps the provider chosen on its first routed turn
+    effort_prefixes: LevelMap = Field(default_factory=lambda: {"/fast": "off", "/think": "high"})  # request prefix -> thinking level
+    connector_effort: LevelMap = Field(default_factory=dict)  # connector id -> thinking level, overrides its effort_hint
     footer: bool = True  # last line of an answer: provider, rule, tools, cost
     footer_surfaces: list[str] = Field(default_factory=lambda: ["discord", "v1"])
 

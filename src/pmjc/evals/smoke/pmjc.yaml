@@ -1,0 +1,17 @@
+set: pmjc
+description: pmjc's own tools (threads, notes, contacts, watches, jobs, settings). State writes are recorded, never stored.
+tasks:
+  - {id: pm_connectors, prompt: "Which services are connected to pmjc?", max_turns: 4, expect: {tools_called: [pmjc_connectors]}}
+  - {id: pm_capabilities, prompt: "Can you send an SMS for me? Check what pmjc can do first.", max_turns: 4, expect: {tools_called: [pmjc_capabilities]}}
+  - {id: pm_memory_set, prompt: "Remember that I prefer metric units.", max_turns: 4, expect: {acts: [{tool: pmjc_memory_set}]}}
+  - {id: pm_memory_search, prompt: "What do your notes say about my preferred units?", max_turns: 4, expect: {tools_called: [pmjc_memory_search]}}
+  - {id: pm_contact_find, prompt: "Do I have a contact called Alex?", max_turns: 4, expect: {tools_called: [pmjc_contact_find]}}
+  - {id: pm_contact_set, prompt: "Save a contact: Jordan Smith, email jordan@example.com.", max_turns: 4, expect: {acts: [{tool: pmjc_contact_set}]}}
+  - {id: pm_threads, prompt: "What open threads do I have with you?", max_turns: 4, expect: {tools_called: [pmjc_threads_recent]}}
+  - {id: pm_watch, prompt: "Remind me in 20 minutes to check the oven.", max_turns: 4, expect: {acts: [{tool: pmjc_watch_start}]}}
+  - {id: pm_watch_list, prompt: "Which watches are running?", max_turns: 4, expect: {tools_called: [pmjc_watch_list]}}
+  - {id: pm_jobs, prompt: "List my scheduled jobs.", max_turns: 4, expect: {tools_called: [pmjc_jobs_list]}}
+  - {id: pm_job_create, prompt: "Every weekday at 8am, tell me the weather in London.", max_turns: 4, expect: {acts: [{tool: pmjc_job_create}]}}
+  - {id: pm_events, prompt: "What events has pmjc seen recently?", max_turns: 4, expect: {tools_called: [pmjc_events_recent]}}
+  - {id: pm_settings_get, prompt: "Which pmjc settings can you change from chat?", max_turns: 4, expect: {tools_called: [pmjc_settings_get]}}
+  - {id: pm_handoff, prompt: "I need to call the dentist to reschedule. Hand that off to me with a reminder.", max_turns: 5, expect: {acts: [{tool: pmjc_handoff}]}}

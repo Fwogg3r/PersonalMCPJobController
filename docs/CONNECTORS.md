@@ -113,6 +113,22 @@ Gotchas:
 
 `ebay_search` takes a list of queries (max 10) so a whole watch fits in one call; after a run reads listings it cannot make another egress call.
 
+## Spotify (the `spotify` connector)
+
+1. Open <https://developer.spotify.com/dashboard>, **Create app**, tick **Web API**.
+2. Add the redirect URI `http://127.0.0.1:8770/oauth/spotify/callback` (use your pmjc port). Spotify refuses `localhost`; use the IP.
+3. Copy the **Client ID** and enter it yourself: `uv run pmjc auth set spotify` or the dashboard's Connectors tab. No client secret is needed (sign-in uses PKCE).
+4. Click **Connect** on the dashboard (or `uv run pmjc auth connect spotify`) and sign in with your Spotify account.
+
+Since February 2026 Spotify's Development Mode apps need a Premium account and allow at most five users (add them under the app's **User Management**); playback control always needs Premium. Playback commands also need a device with Spotify open: `spotify_devices` lists them and `spotify_transfer` moves playback to one.
+
+Tools and approvals:
+- **Playback** (`spotify_next`, `_previous`, `_pause`, `_resume`, `_seek`, `_volume`, `_shuffle`, `_repeat`, `_transfer`, `_queue` and `_play` by URI) is `auto_clean`: no approval while the run is clean, and repeating one in the same thread doesn't ask again (`repeatable`). After a run has read track, playlist or device names (third-party text), each call asks.
+- **By name** (`spotify_queue_search`, `spotify_play_search`, `spotify_search`) sends a free-text query to Spotify, so it is `egress`: a clean run only, one call. Put every song into one `spotify_queue_search` list (max 5).
+- **Library and playlists** (`spotify_save`, `_unsave`, `_playlist_add`, `_playlist_remove`, `_playlist_create`) always ask. Playlist writes are `egress` because shared playlists are visible to others.
+
+Options under `connectors.spotify` in settings: `max_volume` (0-100, default 100) caps `spotify_volume`; `public_playlists` (default false) requests the public-playlist scope and allows `spotify_playlist_create(public=true)`. Sign in again after turning it on. Change any tool's level with `tool_levels` (e.g. `spotify_*: ask`).
+
 ## Web search and page fetch (the `web` connector)
 
 `web_search` (up to 5 queries per call) and `web_fetch` (up to 5 URLs per call, readable text) give runs on local models the reach of a client's own web tools. Both return third-party text and send queries/URLs off the machine, so after one call a run is tainted and can't make another egress call: the model puts everything into one list. `web_fetch` also stays allowed after taint for URLs the owner declared in a job or watch (`read_urls`, `read_prefixes`, `read_sites`; every URL in the call must match; read_sites never matches a URL with a query string).

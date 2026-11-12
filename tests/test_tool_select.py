@@ -129,11 +129,14 @@ def test_core_always_present_and_default_mode_is_all():
     c = _caller()
     sel = tool_select.begin(_prov(), c, _universe(c), "hello there")
     names = _names(sel)
-    for core in ("pmjc_capabilities", "pmjc_connectors", "pmjc_context", "pmjc_thread_get", "pmjc_memory_set",
-                 "pmjc_contact_find", "pmjc_watch_start", "pmjc_result_get" if "pmjc_result_get" in names else "pmjc_context"):
+    for core in ("pmjc_capabilities", "pmjc_connectors", "pmjc_memory_set", "pmjc_research",
+                 "pmjc_contact_find", "pmjc_watch_start", "pmjc_job_create"):
         assert core in names
+    assert "pmjc_context" not in names and "pmjc_watch_cancel" not in names  # admin tools load with the pmjc connector
     assert not [n for n in names if n.startswith(("alpha_", "beta_", "gamma_"))]
-    assert ask.WATCH_TOOLS <= tool_select.CORE_TOOLS
+    group = {t.name for t in sel.groups.get("pmjc", [])}
+    assert ask.WATCH_TOOLS <= tool_select.CORE_TOOLS | group  # every tool a run may use is either sent or loadable
+    assert {"pmjc_context", "pmjc_thread_get", "pmjc_watch_list"} <= group
 
 
 def test_alias_selection_from_request_text():
@@ -221,23 +224,38 @@ def test_deterministic_order():
 
 
 # --- the loader and the loop -------------------------------------------------------------------------------
-async def test_capabilities_loads_for_next_turn_one_batch_max(monkeypatch):
+async def test_capabilities_loads_for_next_call_batches_capped(monkeypatch):
     llm = FakeLLM(monkeypatch, [call("pmjc_capabilities", {"task": "lamp"}, "c1"),
                                 call("pmjc_capabilities", {"task": "zebra"}, "c2"), final()])
     tid = memory.thread_new("t")
     c = _caller(tid)
     u = _universe(c)
-    res = await agent._openai(_prov(), "hello", c, u, "sys", 6)
+    res = await agent._openai(_prov(select_max_batches=1), "hello", c, u, "sys", 6)
     assert res.text == "done"
     assert "alpha_read" not in llm.tool_names(0)
-    assert "alpha_read" in llm.tool_names(1) and llm.tool_names(1) == llm.tool_names(2)  # one batch, stable after
+    assert "alpha_read" in llm.tool_names(1) and llm.tool_names(1) == llm.tool_names(2)  # cap reached, stable after
     loaded = json.loads(llm.tool_results(1)[0])[-1]
-    assert loaded["tools_loaded"] == ["alpha"] and "next turn" in loaded["note"]
+    assert loaded["tools_loaded"] == ["alpha"] and "next response" in loaded["note"]
     second = json.loads(llm.tool_results(2)[1])[-1]
-    assert second["tools_loaded"] == [] and "already loaded once" in second["note"]
+    assert second["tools_loaded"] == [] and "No more tools can be loaded" in second["note"]
     assert "beta_net" not in llm.tool_names(2)
     assert memory.thread_tools(tid) == ["alpha"]  # sticky for the next turn of the thread
     assert c.tool_select is None
+
+
+async def test_second_connector_loads_by_default(monkeypatch):
+    """A request needing two connectors (find a meeting, then email) can load both: the default allows 3 loads."""
+    llm = FakeLLM(monkeypatch, [call("pmjc_capabilities", {"task": "lamp"}, "c1"),
+                                call("pmjc_capabilities", {"task": "zebra"}, "c2"), final()])
+    c = _caller(memory.thread_new("t"))
+    u = _universe(c)
+    await agent._openai(_prov(), "hello", c, u, "sys", 6)
+    assert "alpha_read" in llm.tool_names(1) and "beta_net" not in llm.tool_names(1)
+    assert {"alpha_read", "beta_net"} <= set(llm.tool_names(2))
+
+
+def test_research_is_core():
+    assert "pmjc_research" in tool_select.CORE_TOOLS
 
 
 async def test_unsent_tool_call_executes_through_executor(monkeypatch):
@@ -318,3 +336,20 @@ async def test_all_mode_unchanged(monkeypatch):
     assert llm.tool_results(1) == ["lamp:x"]
     s, system = agent.tool_payload(_prov("all"), u, "S", "openai")
     assert system == "S" and [x["function"]["name"] for x in s] == [t.name for t in u]
+
+
+def test_live_matches_find_owner_tools_by_name_and_doc():
+    names = lambda task: [t.name for t in tool_select.live_matches(task)]
+    assert names("gamma please") == ["gamma_one", "gamma_two"]  # name hits
+    assert names("lamp state") == ["alpha_read"]  # first doc line hits
+    assert names("check the status") == []  # generic words alone select nothing
+    assert names("") == []
+
+
+async def test_capabilities_lists_connected_tools_and_loads_them(monkeypatch):
+    llm = FakeLLM(monkeypatch, [call("pmjc_capabilities", {"task": "gamma things"}, "c1"), final()])
+    c = _caller(memory.thread_new("t"))
+    await agent._openai(_prov(), "hello", c, _universe(c), "sys", 4)
+    out = json.loads(llm.tool_results(1)[0])
+    assert out[0]["available_now"] and "gamma_one" in out[0]["pmjc"] and out[0]["connectors"] == ["gamma"]
+    assert {"gamma_one", "gamma_two"} <= set(llm.tool_names(1))

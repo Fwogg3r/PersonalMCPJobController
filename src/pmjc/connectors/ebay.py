@@ -72,6 +72,7 @@ def compact(s: dict) -> dict:
 
 class Ebay(Connector):
     id = "ebay"
+    effort_hint = "low"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ['ebay', 'buy', 'listing', 'price', 'deal', 'auction', 'for sale']  # request words that select this connector (tool_mode: select)
     name = "eBay (Browse API)"
     description = "Search eBay listings as structured rows (price, condition, buying option, quantity, seller, link)."

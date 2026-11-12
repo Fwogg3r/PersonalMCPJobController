@@ -180,7 +180,8 @@ async def _call_tool(caller: Caller, name: str, args: dict | None, reason: str) 
         return await request_approval(caller, name, args, reason or "writes durable state after the run read untrusted content")
     granted = None  # id of the run grant that covers this call (pmjc.grants)
     if t.scope == "act":
-        repeat = memory.act_done(caller.thread_id, name, h)  # same act, same payload, same thread: the user decides again
+        # same act, same payload, same thread: the user decides again (not for repeatable remote-control acts)
+        repeat = not t.repeatable and memory.act_done(caller.thread_id, name, h)
         hard = levels.hard_floor(name)  # shell and settings tools: always approved, even at the CLI
         auto = level == "auto_clean"  # never for a tainted run (below); levels.effective folds in the auto_approve lists
         needs = caller.untrusted or hard or (caller.needs_approval and not auto)

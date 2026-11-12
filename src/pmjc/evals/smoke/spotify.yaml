@@ -1,0 +1,28 @@
+set: spotify
+description: Spotify playback, library and playlists. Reads run for real; every act is recorded, never sent.
+tasks:
+  - {id: sp_now, prompt: "What song is playing right now?", max_turns: 4, expect: {tools_called: [spotify_now_playing]}}
+  - {id: sp_devices, prompt: "Which Spotify devices do I have?", max_turns: 4, expect: {tools_called: [spotify_devices]}}
+  - {id: sp_skip, prompt: "Skip this song.", max_turns: 4, expect: {acts: [{tool: spotify_next}]}}
+  - {id: sp_prev, prompt: "Go back to the previous song.", max_turns: 4, expect: {acts: [{tool: spotify_previous}]}}
+  - {id: sp_pause, prompt: "Pause the music.", max_turns: 4, expect: {acts: [{tool: spotify_pause}]}}
+  - {id: sp_resume, prompt: "Resume my music.", max_turns: 4, expect: {acts: [{tool: spotify_resume}]}}
+  - {id: sp_volume, prompt: "Set the Spotify volume to 30%.", max_turns: 4, expect: {acts: [{tool: spotify_volume, args: {volume_percent: 30}}]}}
+  - {id: sp_shuffle, prompt: "Turn shuffle on.", max_turns: 4, expect: {acts: [{tool: spotify_shuffle}]}}
+  - {id: sp_repeat, prompt: "Repeat this track.", max_turns: 4, expect: {acts: [{tool: spotify_repeat, args: {state: track}}]}}
+  - {id: sp_seek, prompt: "Jump to one minute into the current song.", max_turns: 4, expect: {acts: [{tool: spotify_seek, args: {position_ms: 60000}}]}}
+  - {id: sp_play_search, prompt: "Play Bohemian Rhapsody by Queen.", max_turns: 5, expect: {tools_called_any: [spotify_play_search, spotify_play]}}
+  - {id: sp_queue_search, prompt: "Queue Hey Jude by the Beatles.", max_turns: 5, expect: {tools_called_any: [spotify_queue_search, spotify_queue]}}
+  - {id: sp_queue_list, prompt: "What's next in my Spotify queue?", max_turns: 4, expect: {tools_called: [spotify_queue_list]}}
+  - {id: sp_recent, prompt: "What did I listen to recently on Spotify?", max_turns: 4, expect: {tools_called: [spotify_recent]}}
+  - {id: sp_top, prompt: "Who are my top artists lately?", max_turns: 4, expect: {tools_called: [spotify_top]}}
+  - {id: sp_saved, prompt: "Show my most recently liked songs.", max_turns: 4, expect: {tools_called: [spotify_saved]}}
+  - {id: sp_search, prompt: "Search Spotify for albums by Daft Punk.", max_turns: 4, expect: {tools_called: [spotify_search]}}
+  - {id: sp_like, prompt: "Add Bohemian Rhapsody by Queen to my liked songs.", max_turns: 5, expect: {tools_called: [spotify_search], acts: [{tool: spotify_save}]}}
+  - {id: sp_unlike, prompt: "Remove Bohemian Rhapsody by Queen from my liked songs.", max_turns: 5, expect: {acts: [{tool: spotify_unsave}]}}
+  - {id: sp_playlists, prompt: "List my Spotify playlists.", max_turns: 4, expect: {tools_called: [spotify_playlists]}}
+  - {id: sp_playlist_tracks, prompt: "What's in my first Spotify playlist?", max_turns: 5, expect: {tools_called: [spotify_playlists, spotify_playlist_tracks]}}
+  - {id: sp_playlist_create, prompt: "Create a Spotify playlist called Smoke Test Mix.", max_turns: 4, expect: {acts: [{tool: spotify_playlist_create, args: {name: Smoke Test Mix}}]}}
+  - {id: sp_playlist_add, prompt: "Add the song that's playing to my first playlist.", max_turns: 6, expect: {acts: [{tool: spotify_playlist_add}]}}
+  - {id: sp_playlist_remove, prompt: "Remove the first song from my first playlist.", max_turns: 6, expect: {acts: [{tool: spotify_playlist_remove}]}}
+  - {id: sp_transfer, prompt: "Switch Spotify playback to my other device (it's fine if nothing is playing).", max_turns: 5, expect: {tools_called: [spotify_devices], acts: [{tool: spotify_transfer}]}}

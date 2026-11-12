@@ -58,6 +58,36 @@ uv run pmjc eval run -p lmstudio-local -n 3 \
 
 `--set-option` applies to every variant. Overridable: any provider setting except `id`, `kind`, `credential`, `start`, `base_url`, `trust` (`extra.<name>=value` for the `extra` map). Models are not deterministic, so use `-n 3` or more and compare means; a difference of one task in a single run is noise.
 
+Thinking options are overridable too: `--variant adaptive:thinking.control=param,thinking.policy=adaptive`,
+`--variant low:thinking.control=param,thinking.default=low`, `thinking.levels.high=xhigh`. The report shows each
+row's starting effort levels, escalations, reasoning tokens (when the server reports them) and median latency.
+A full comparison of every level, with results and the per-model `levels` mapping it led to, is in
+[reviews/2026-11-11-thinking-benchmark.md](reviews/2026-11-11-thinking-benchmark.md). The "lean" variant it tested (no better than plain off on that model):
+`--variant lean:thinking.control=param,thinking.policy=adaptive,thinking.levels.low=none,thinking.levels.medium=none,thinking.levels.high=medium`.
+
+## Smoke test of your real tools
+
+```
+uv run pmjc eval smoke -p lmstudio-local                      # every smoke prompt, once
+uv run pmjc eval smoke -p lmstudio-local -c spotify -c files  # some connectors
+uv run pmjc eval smoke -p lmstudio-local --coverage           # real tools that have no prompt yet
+```
+
+The eval above uses fake connectors. The smoke test drives your **real** connectors with a local model, one plain
+request per tool (`src/pmjc/evals/smoke/<connector>.yaml`, the same task format; generic prompts, nothing personal),
+and scores whether the model picked the right tool with usable arguments:
+
+- **Reads run for real** (what's playing, a folder listing, a web search, the SSH machine list).
+- **Acts never run.** Every `act` tool, and every tool that writes pmjc state, gets its function swapped for a recorder
+  that stores the arguments and returns `{"dry_run": true}`. The executor is unchanged, so approvals are still
+  requested; they are decided inside the temporary data folder, so only the recorder runs.
+- **A temporary data folder** holds a copy of your settings without anything that reaches a person (notify channels,
+  the Discord front door, approval follow-ups, scheduled jobs, monitoring, standing grants) and a copy of your
+  credentials. OAuth tokens refreshed during the run are written back to your real store (some services rotate them).
+- **Local providers only:** your real data (files, messages, playback) goes into the prompt.
+
+Prompts for tools of your own (plugins, mounted MCP servers) go in `<data folder>/evals/smoke/*.yaml`, outside the repo; they load with the shipped ones.
+
 ## Paid providers
 
 A provider whose `trust` isn't `local` spends money. `pmjc eval run` prints an estimate first (runs, approximate input/output tokens, rough dollars when the provider has prices) and refuses to run without `--allow-paid`. `--budget-usd` (default 1.0) stops the eval once the reported spend passes it. The `claude_cli` provider can't be used (it needs a running server and your plan login).

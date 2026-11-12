@@ -1,0 +1,7 @@
+set: files
+description: Local folders pmjc may read.
+tasks:
+  - {id: fi_roots, prompt: "Which folders can you read on this computer?", max_turns: 4, expect: {tools_called: [files_roots]}}
+  - {id: fi_list, prompt: "List what's in the first folder you can read.", max_turns: 5, expect: {tools_called: [files_list]}}
+  - {id: fi_search, prompt: "Find files with README in their name in the folders you can read.", max_turns: 5, expect: {tools_called: [files_search]}}
+  - {id: fi_read, prompt: "Find a README file in the folders you can read and tell me its first line.", max_turns: 6, expect: {tools_called: [files_read]}}
