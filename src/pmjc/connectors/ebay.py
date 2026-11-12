@@ -72,6 +72,7 @@ def compact(s: dict) -> dict:
 
 class Ebay(Connector):
     id = "ebay"
+    group = "shopping"
     effort_hint = "low"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ['ebay', 'buy', 'listing', 'price', 'deal', 'auction', 'for sale']  # request words that select this connector (tool_mode: select)
     name = "eBay (Browse API)"
@@ -161,10 +162,10 @@ class Ebay(Connector):
         return {"query": q.get("q"), "total": d.get("total"),
                 "rows": [compact(s) for s in d.get("itemSummaries") or []]}
 
-    @tool(scope="read", untrusted_output=True, egress=True, private_output=False)
+    @tool(scope="read", untrusted_output=True, egress=True, private_output=False, fixed_host=True)
     async def ebay_search(self, queries: list[dict], details: bool = False, currency: str = "USD") -> list[dict]:
-        """Search eBay for several things in ONE call (up to 10 queries; a run can only call this once after it reads
-        listings). Each query: q, max_price, min_price, buying_options (FIXED_PRICE|AUCTION|BEST_OFFER), conditions
+        """Search eBay for several things in ONE call (up to 10 queries; batch them rather than calling once per item).
+        Each query: q, max_price, min_price, buying_options (FIXED_PRICE|AUCTION|BEST_OFFER), conditions
         (NEW|USED|...), category_id, limit (default 20, max 50), min_quantity, details (bool). Top-level details=true
         also fetches each hit's available quantity and item specifics (at most 20 lookups per call); min_quantity
         keeps only rows with at least that many available (needs details). Returns per query: rows of id, title,

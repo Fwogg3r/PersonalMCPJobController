@@ -7,6 +7,7 @@ from ..connector import Connector, Field, Health, tool
 
 class Discord(Connector):
     id = "discord"
+    group = "social"
     effort_hint = "low"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ['discord', 'dm', 'direct message']  # request words that select this connector (tool_mode: select)
     name = "Discord (bot)"
@@ -102,6 +103,7 @@ class Discord(Connector):
 
 class Telegram(Connector):
     id = "telegram"
+    group = "social"
     effort_hint = "low"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ['telegram']  # request words that select this connector (tool_mode: select)
     limitations = 'Acts as the bot, never as the user; reads only messages sent to the bot.'
@@ -142,6 +144,7 @@ class Telegram(Connector):
 
 class Slack(Connector):
     id = "slack"
+    group = "social"
     effort_hint = "low"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ['slack']  # request words that select this connector (tool_mode: select)
     limitations = 'Acts as the app, never as the user; sees only channels it was invited to.'
@@ -187,6 +190,7 @@ class Slack(Connector):
 
 class Ntfy(Connector):
     id = "ntfy"
+    group = "notify"
     effort_hint = "low"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ['ntfy', 'push notification']  # request words that select this connector (tool_mode: select)
     limitations = 'Push notifications to the user only; one-way.'
@@ -211,6 +215,7 @@ class Ntfy(Connector):
 
 class Webhook(Connector):
     id = "webhook"
+    group = "notify"
     effort_hint = "low"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ['webhook']  # request words that select this connector (tool_mode: select)
     limitations = 'Posts to one configured URL; one-way.'

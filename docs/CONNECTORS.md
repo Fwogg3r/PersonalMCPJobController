@@ -123,9 +123,11 @@ Gotchas:
 Since February 2026 Spotify's Development Mode apps need a Premium account and allow at most five users (add them under the app's **User Management**); playback control always needs Premium. Playback commands also need a device with Spotify open: `spotify_devices` lists them and `spotify_transfer` moves playback to one.
 
 Tools and approvals:
-- **Playback** (`spotify_next`, `_previous`, `_pause`, `_resume`, `_seek`, `_volume`, `_shuffle`, `_repeat`, `_transfer`, `_queue` and `_play` by URI) is `auto_clean`: no approval while the run is clean, and repeating one in the same thread doesn't ask again (`repeatable`). After a run has read track, playlist or device names (third-party text), each call asks.
-- **By name** (`spotify_queue_search`, `spotify_play_search`, `spotify_search`) sends a free-text query to Spotify, so it is `egress`: a clean run only, one call. Put every song into one `spotify_queue_search` list (max 5).
-- **Library and playlists** (`spotify_save`, `_unsave`, `_playlist_add`, `_playlist_remove`, `_playlist_create`) always ask. Playlist writes are `egress` because shared playlists are visible to others.
+All Spotify tools are in the `music` group, which ships at level `auto`:
+- **Playback** (`spotify_next`, `_previous`, `_pause`, `_resume`, `_seek`, `_volume`, `_shuffle`, `_repeat`, `_transfer`, `_queue` and `_play` by URI) and **library** (`spotify_save`, `_unsave`) run without approval at any time, also after the run read track, playlist or device names.
+- **By name** (`spotify_queue_search`, `spotify_play_search`, `spotify_search`) sends a free-text query to Spotify's own API (`fixed_host` egress), so it also runs at any time, except that it asks when the run has read private data from a group that isn't `auto` (mail, files, chat) and after 30 automatic searches in one run. Put every song into one `spotify_queue_search` list (max 5).
+- **Playlists** (`spotify_playlist_add`, `_remove`, `_create`) override the group to `ask`: shared playlists are visible to others, so after the run read outside content they are refused like any egress tool. Setting `group_levels: {music: auto}` doesn't change that; only `tool_levels` can.
+- Set `group_levels: {music: ask}` to get the old behaviour (asks after taint, search only in a clean run).
 
 Options under `connectors.spotify` in settings: `max_volume` (0-100, default 100) caps `spotify_volume`; `public_playlists` (default false) requests the public-playlist scope and allows `spotify_playlist_create(public=true)`. Sign in again after turning it on. Change any tool's level with `tool_levels` (e.g. `spotify_*: ask`).
 

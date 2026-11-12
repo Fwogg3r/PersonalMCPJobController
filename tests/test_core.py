@@ -355,6 +355,69 @@ def test_levels_precedence():
     assert levels.effective("x_send", None, {"*": "off", "x_*": "auto_clean"}) == "auto_clean"  # longest glob wins
     assert levels.effective("pmjc_shell_run", None, {"pmjc_shell_run": "auto_clean"}, {"pmjc_shell_run"}) == "always_ask"
     assert levels.effective("pmjc_settings_set", None, {"pmjc_settings_set": "off"}) == "off"
+    assert levels.effective("pmjc_shell_run", None, {}, (), "music", {"pmjc": "auto"}) == "always_ask"
+
+
+def test_group_levels_precedence():
+    from pmjc import levels
+    assert levels.effective("x_next", None, {}, (), "music") == "auto"  # takes the group's shipped default
+    assert levels.effective("x_get", None, {}, (), "no_such_group") == "ask"
+    assert levels.effective("x_next", None, {}, (), "music", {"music": "ask"}) == "ask"  # owner group setting
+    assert levels.effective("x_load", "auto_clean", {}, (), "system", {"system": "always_ask"}) == "always_ask"
+    # a shipped override stricter than the group survives a looser owner group level, but not a stricter one
+    assert levels.effective("x_add", "ask", {}, (), "music", {"music": "auto"}) == "ask"
+    assert levels.effective("x_add", "ask", {}, (), "music", {"music": "off"}) == "off"
+    assert levels.effective("x_add", "ask", {"x_add": "auto"}, (), "music", {"music": "ask"}) == "auto"  # tool wins
+    # auto_approve means at least auto_clean: it never downgrades auto, nor turns on an off tool
+    assert levels.effective("x_next", None, {}, {"x_next"}, "music") == "auto"
+    assert levels.effective("x_send", "always_ask", {}, {"x_send"}, "social") == "auto_clean"
+    assert levels.effective("x_next", None, {}, {"x_next"}, "music", {"music": "off"}) == "off"
+
+
+def test_auto_needs_fixed_host_egress():
+    from types import SimpleNamespace as NS
+    from pmjc import levels
+    s = NS(tool_levels={"*": "auto"}, auto_approve=[], group_levels={})
+    assert levels.for_tool(NS(name="web_fetch", level=None, group="web", egress=True, fixed_host=False), s) == "auto_clean"
+    assert levels.for_tool(NS(name="ebay_search", level=None, group="shopping", egress=True, fixed_host=True), s) == "auto"
+    assert levels.for_tool(NS(name="spotify_next", level=None, group="music", egress=False, fixed_host=False), s) == "auto"
+
+
+def test_every_shipped_tool_has_a_known_group():
+    from pmjc import levels
+    reg = _reg()
+    for t in reg.tools(include_unconfigured=True):
+        if t.connector != "fake":
+            assert t.group in levels.GROUPS, (t.name, t.group)
+    t = {x.name: x for x in reg.tools(include_unconfigured=True)}
+    assert t["ebay_search"].group == "shopping" and t["ebay_search"].fixed_host
+    assert t["web_fetch"].group == "web" and not t["web_fetch"].fixed_host
+    assert t["discord_send"].group == "social"
+
+
+async def test_group_off_hides_tools():
+    from pmjc import config
+    s = config.load(); s.group_levels = {"fake": "off"}; config.save(s)
+    names = {x.name for x in _reg().tools()}
+    assert not any(n.startswith("fake_") for n in names)
+
+
+async def test_auto_group_after_taint():
+    from pmjc import auth, config, executor
+    s = config.load(); s.group_levels = {"fake": "auto"}; config.save(s)
+    _reg()
+    c = auth.Caller("agent", "remote", {"sources", "actions"}, thread_id=None)
+    await executor.call_tool(c, "fake_messages", {})
+    assert c.untrusted
+    assert await executor.call_tool(c, "fake_send", {"to": "a"}) == {"sent": "a"}  # act: no approval after taint
+    assert await executor.call_tool(c, "fake_send", {"to": "a"}) == {"sent": "a"}
+    with pytest.raises(executor.Denied):  # egress without fixed_host stays refused even at auto
+        await executor.call_tool(c, "fake_search", {"q": "x"})
+
+
+def test_group_levels_not_settable_from_chat():
+    from pmjc import settings_edit
+    assert "group_levels" in settings_edit.HARD_DENY_TOP
 
 
 def test_shipped_levels():

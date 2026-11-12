@@ -9,6 +9,7 @@ from ..connector import Connector, tool
 
 class Pmjc(Connector):
     id = "pmjc"
+    group = "pmjc"
     effort_hint = "medium"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ['handoff', 'hand off', 'approval', 'approve', 'shell', 'job', 'events', 'recent runs', 'pmjc', 'watch', 'reminder', 'thread', 'conversation', 'forget', 'settings', 'profile']  # request words that select this connector (tool_mode: select)
     name = "pmjc"

@@ -19,6 +19,7 @@ async def geocode(http, place: str) -> dict:
 
 class Weather(Connector):
     id = "weather"
+    group = "local_info"
     effort_hint = "low"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ['weather', 'forecast', 'rain', 'temperature', 'umbrella', 'snow']  # request words that select this connector (tool_mode: select)
     limitations = 'Forecasts only (Open-Meteo); no radar, alerts or history.'
@@ -30,7 +31,7 @@ class Weather(Connector):
     async def health(self) -> Health:
         return Health(True, "no account needed")
 
-    @tool(scope="read", egress=True, private_output=False)
+    @tool(scope="read", egress=True, private_output=False, fixed_host=True)
     async def weather_forecast(self, place: str | None = None, lat: float | None = None, lon: float | None = None,
                                days: int = 3, units: str = "fahrenheit") -> dict:
         """Current conditions and a daily forecast for a place name or coordinates (use ha_location for 'near me')."""
@@ -54,6 +55,7 @@ class Weather(Connector):
 
 class Places(Connector):
     id = "places"
+    group = "local_info"
     effort_hint = "low"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ['nearby', 'near me', 'restaurant', 'shop', 'geocode', 'address', 'place', 'map']  # request words that select this connector (tool_mode: select)
     limitations = 'OpenStreetMap data: no reviews, ratings, prices or live opening status.'
@@ -65,7 +67,7 @@ class Places(Connector):
     async def health(self) -> Health:
         return Health(True, "no account needed")
 
-    @tool(scope="read", egress=True, private_output=False)
+    @tool(scope="read", egress=True, private_output=False, fixed_host=True)
     async def places_nearby(self, lat: float, lon: float, kind: str = "restaurant", radius_m: int = 2000,
                             cuisine: str | None = None, limit: int = 15) -> list[dict]:
         """Places of a kind near coordinates. kind: restaurant, fast_food, cafe, bar, pharmacy, fuel, supermarket, ...
@@ -89,7 +91,7 @@ class Places(Connector):
                         "address": " ".join(filter(None, [t.get("addr:housenumber"), t.get("addr:street"), t.get("addr:city")]))})
         return out[:limit]
 
-    @tool(scope="read", egress=True, private_output=False)
+    @tool(scope="read", egress=True, private_output=False, fixed_host=True)
     async def places_geocode(self, place: str) -> dict:
         """Coordinates for a place name or address."""
         return await geocode(self.http, place)
@@ -97,6 +99,7 @@ class Places(Connector):
 
 class GitHub(Connector):
     id = "github"
+    group = "dev"
     effort_hint = "medium"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ['github', 'issue', 'pull request', 'repo']  # request words that select this connector (tool_mode: select)
     limitations = "Notifications, issue/PR search and comments only; what is visible depends on the token's scopes. No code access, no merging."
@@ -119,7 +122,7 @@ class GitHub(Connector):
                  "reason": n["reason"], "updated": n["updated_at"]}
                 for n in await self._api("GET", "/notifications", params={"all": str(all).lower()})]
 
-    @tool(scope="read", untrusted_output=True, egress=True)
+    @tool(scope="read", untrusted_output=True, egress=True, fixed_host=True)
     async def github_search_issues(self, query: str, limit: int = 10) -> list[dict]:
         """Search issues and pull requests (GitHub search syntax, e.g. 'repo:owner/name is:open label:bug')."""
         d = await self._api("GET", "/search/issues", params={"q": query, "per_page": min(limit, 50)})

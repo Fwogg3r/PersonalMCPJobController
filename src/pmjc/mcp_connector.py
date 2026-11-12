@@ -242,6 +242,7 @@ def effective_flags(entry: "config.McpServerConfig", tool: Any) -> dict:
 
 class McpConnector(Connector):
     """Base class; `mount_classes` makes one subclass per configured server."""
+    group = "mcp"
     entry: "config.McpServerConfig"
     session: Session
 

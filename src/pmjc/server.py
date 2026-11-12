@@ -189,7 +189,8 @@ def create_app() -> FastAPI:
         s = config.load()
         return [{"name": t.name, "connector": t.connector, "scope": t.scope, "description": t.doc,
                  "egress": t.egress, "untrusted_output": t.untrusted_output,
-                 "level": levels.effective(t.name, t.level, s.tool_levels, s.auto_approve) if t.scope == "act" else None,
+                 "group": t.group,
+                 "level": levels.for_tool(t, s) if t.scope == "act" or t.egress else None,
                  "parameters": registry.tool_json_schema(t)}
                 for t in registry.get().tools() if c.can(t.mcp_scope)]
 

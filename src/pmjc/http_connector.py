@@ -67,6 +67,7 @@ def _make_tool(spec: dict) -> Any:
                                          return_annotation=Any)
     fn.__annotations__ = {p.name: p.annotation for p in sig_params} | {"return": Any}
     return tool(fn, scope=spec.get("scope", "act"), untrusted_output=spec.get("untrusted_output", True),
+                group=spec.get("group"), fixed_host=bool(spec.get("fixed_host", False)),
                 egress=spec.get("egress", bool(params)), level=spec.get("level"))
 
 
@@ -120,6 +121,7 @@ def load_yaml_connector(file: Path) -> type[Connector]:
         "docs_url": spec.get("docs_url", ""), "spec": spec,
         "limitations": spec.get("limitations", ""), "native_alternatives": spec.get("native_alternatives", ""),
         "credentials": [Field(**c) for c in spec.get("credentials") or []],
+        "group": spec.get("group", ""),
     }
     for t in spec.get("tools") or []:
         attrs[t["name"]] = _make_tool(t)

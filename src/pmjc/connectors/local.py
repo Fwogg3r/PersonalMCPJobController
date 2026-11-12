@@ -29,6 +29,7 @@ def _run(argv: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
 
 class Files(Connector):
     id = "files"
+    group = "files"
     effort_hint = "medium"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ['file', 'folder', 'directory', 'document']  # request words that select this connector (tool_mode: select)
     limitations = "Read-only, only inside folders from files_roots; secret-looking files are never readable. Can't write or delete."
@@ -133,6 +134,7 @@ class Files(Connector):
 
 class PcStatus(Connector):
     id = "pc"
+    group = "system"
     effort_hint = "low"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ['cpu', 'ram', 'gpu', 'disk', 'process', 'pc status', 'computer']  # request words that select this connector (tool_mode: select)
     limitations = 'Only the machine pmjc runs on. Read-only.'
@@ -213,6 +215,7 @@ class Ssh(Connector):
     Set `include_self: false` to turn it off.
     """
     id = "ssh"
+    group = "system"
     effort_hint = "high"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ['ssh', 'server', 'remote machine', 'run command', 'script']  # request words that select this connector (tool_mode: select)
     limitations = 'Only machines in ssh_machines (configured ones plus the pmjc host itself, which runs commands locally); every command needs approval. No interactive sessions.'
@@ -366,6 +369,7 @@ class Ssh(Connector):
 
 class LmStudio(Connector):
     id = "lmstudio"
+    group = "system"
     effort_hint = "low"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ['lm studio', 'local model', 'llm']  # request words that select this connector (tool_mode: select)
     limitations = 'Local models only; ask uses already-loaded models, loading needs approval and uses GPU memory. Unload when done.'

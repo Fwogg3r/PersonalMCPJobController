@@ -291,9 +291,13 @@ class Settings(BaseModel):
     disabled_connectors: list[str] = Field(default_factory=list)
     enabled_plugins: list[str] = Field(default_factory=list)  # entry-point connector names allowed to load
     auto_approve: list[str] = Field(default_factory=list)  # act tools that run without approval in clean runs (any caller)
-    # Permission level per tool name or glob (pmjc.levels): off | always_ask | ask | auto_clean. Overrides the level a
-    # tool ships with and `auto_approve`; pmjc_shell_run and the settings tools stay always_ask (only `off` applies).
-    tool_levels: dict[str, Literal["off", "always_ask", "ask", "auto_clean"]] = Field(default_factory=dict)
+    # Permission level per tool name or glob (pmjc.levels): off | always_ask | ask | auto_clean | auto. Overrides the
+    # level a tool ships with, its group and `auto_approve`; pmjc_shell_run and the settings tools stay always_ask
+    # (only `off` applies).
+    tool_levels: dict[str, Literal["off", "always_ask", "ask", "auto_clean", "auto"]] = Field(default_factory=dict)
+    # Permission level per tool group (pmjc.levels.GROUPS: music, shopping, web, social, ...). Overrides the group's
+    # shipped default and tools that take it; a stricter level a tool ships with still wins (set it in tool_levels).
+    group_levels: dict[str, Literal["off", "always_ask", "ask", "auto_clean", "auto"]] = Field(default_factory=dict)
     # Standing run grants (pmjc.grants): owner-written only (the settings tools can't set them); none ship by default.
     grants: Annotated[list[StandingGrant], BeforeValidator(_grants_in)] = Field(default_factory=list)
     result_ttl_hours: float = 24.0  # how long a clipped tool result stays pageable with pmjc_result_get

@@ -12,7 +12,8 @@ Put a file in PMJC_HOME/connectors.d/ with `kind: command`:
       - name: mytools_roadmap
         description: List a project's roadmap.
         scope: read                        # read | act (act needs approval); default act
-        # level: auto_clean                # optional permission level (off | always_ask | ask | auto_clean)
+        # level: auto_clean                # optional permission level (off | always_ask | ask | auto_clean | auto)
+        # group: system                    # optional tool group (default: the file's `group:`, else commands)
         untrusted_output: false            # default true
         argv: [roadmap, list, --json, --dir, "{project}/docs/roadmap"]
         params:
@@ -74,6 +75,7 @@ def _make_tool(spec: dict) -> Any:
                                          return_annotation=Any)
     fn.__annotations__ = {p.name: p.annotation for p in sig} | {"return": Any}
     return tool(fn, scope=spec.get("scope", "act"), untrusted_output=spec.get("untrusted_output", True),
+                group=spec.get("group"), fixed_host=bool(spec.get("fixed_host", False)),
                 egress=spec.get("egress", False), level=spec.get("level"))
 
 
@@ -152,6 +154,7 @@ def load_command_connector(file: Path) -> type[Connector]:
         "docs_url": spec.get("docs_url", ""), "spec": spec,
         "limitations": spec.get("limitations", ""), "native_alternatives": spec.get("native_alternatives", ""),
         "credentials": [Field(**c) for c in spec.get("credentials") or []],
+        "group": spec.get("group", "commands"),
         "platforms": spec.get("platforms"),
     }
     for t in spec.get("tools") or []:

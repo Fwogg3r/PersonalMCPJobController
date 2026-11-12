@@ -187,7 +187,9 @@ def validate(rules: Any, state: str = "clean", cover_tainted: bool = False, auto
             raise GrantError(f"unknown tool {name}")
         if t.scope != "act":
             raise GrantError(f"{name} is not an action tool; it needs no grant")
-        lvl = levels.effective(name, t.level, s.tool_levels, set(s.auto_approve) | set(auto_approve))
+        lvl = levels.for_tool(t, s, auto_approve)
+        if lvl == "auto":
+            continue  # runs without approval at any time: needs no grant
         if levels.hard_floor(name) or lvl not in ("ask", "auto_clean"):
             raise GrantError(f"{name} can't be covered by a grant (level {lvl}): every call needs its own approval")
         known = params(t)

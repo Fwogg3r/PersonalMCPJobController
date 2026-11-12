@@ -297,7 +297,7 @@ async def test_sensitive_set_by_private_tools_not_by_web_tools(pub):
     await call(c3, "pmjc_memory_search")
     assert c3.sensitive
     detail = db.q("SELECT detail FROM audit WHERE tool='fake_read' AND status='ok' ORDER BY id DESC LIMIT 1")[0]["detail"]
-    assert detail == "untrusted=0 sensitive=1"  # exposed in the audit log
+    assert detail == "untrusted=0 sensitive=1 from=fake"  # exposed in the audit log, with the source group
 
 
 async def test_system_block_and_history_mark_a_run_sensitive(pub, watch_table, monkeypatch):

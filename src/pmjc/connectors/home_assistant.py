@@ -7,6 +7,7 @@ from ..connector import Connector, Field, Health, tool
 
 class HomeAssistant(Connector):
     id = "home_assistant"
+    group = "home"
     effort_hint = "low"  # thinking effort for runs that use it (thinking.policy adaptive; see pmjc.effort)
     aliases = ['lights', 'light', 'lamp', 'plug', 'switch', 'thermostat', 'scene', 'home', 'turn on', 'turn off', 'location']  # request words that select this connector (tool_mode: select)
     limitations = 'Only what Home Assistant exposes; protected entities (locks, alarms, ...) are refused. Location is the last fix from the phone app.'
