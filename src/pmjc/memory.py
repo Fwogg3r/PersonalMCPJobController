@@ -367,7 +367,8 @@ def contact_set(name: str, aliases: list[str] | None = None, handles: dict[str, 
                 notes: str = "", caller=None) -> dict:
     """handles: per-service names or IDs, e.g. {"discord_display": "Sam", "discord_user_id": "...",
     "discord_dm_channel_id": "...", "phone": "+15550100", "email": "sam@example.com", "telegram_username": "sam"}.
-    By a person: active at once. By an agent: stored as pending until the user approves it in the dashboard."""
+    By a person: active at once. By an agent: stored as pending until the user approves it in the dashboard, unless
+    settings `contacts_from_chat: direct` and the change only adds names, aliases or new handles (then active at once)."""
     _init()
     _forbid_tainted(caller, "contacts")
     name = (name or "").strip()
@@ -375,6 +376,17 @@ def contact_set(name: str, aliases: list[str] | None = None, handles: dict[str, 
         raise ValueError("name: letters, digits, space . _ : / @ - (max 100)")
     handles = {str(k)[:40]: str(v)[:200] for k, v in list((handles or {}).items())[:30]}
     owner = trust_of(caller) == "owner"
+    if not owner and config.load().contacts_from_chat == "direct":
+        active = _load_contact(_contact_key(name))
+        old = active.get("handles") or {}
+        if not any(k in old and str(old[k]) != v for k, v in handles.items()):  # only adds: no redirect of a handle
+            merged = {"name": name, "aliases": sorted(set((active.get("aliases") or []) + [str(a)[:100] for a in (aliases or [])[:20]])),
+                      "handles": {**old, **handles}, "notes": (notes or active.get("notes", ""))[:1000]}
+            row = db.q("SELECT trust FROM notes WHERE key=?", _contact_key(name))
+            # an additive change keeps an owner-written contact owner-tier (note_set refuses agents there)
+            note_set(_contact_key(name), json.dumps(merged), ["contact"],
+                     caller=None if row and row[0]["trust"] == "owner" else caller)
+            return {**merged, "status": "active"}
     base = (_load_contact(_contact_key(name, pending=True)) if not owner else {}) or _load_contact(_contact_key(name))
     merged = {"name": name, "aliases": sorted(set((base.get("aliases") or []) + [str(a)[:100] for a in (aliases or [])[:20]])),
               "handles": {**(base.get("handles") or {}), **handles}, "notes": (notes or base.get("notes", ""))[:1000]}
@@ -410,6 +422,7 @@ def contact_delete(name: str) -> bool:
 
 def contact_find(query: str) -> list[dict]:
     """Active contacts whose name, alias or any handle contains the query."""
+    _init()
     q = query.lower().strip()
     out = []
     for r in db.q("SELECT value FROM notes WHERE key LIKE 'contact:%' ORDER BY key"):

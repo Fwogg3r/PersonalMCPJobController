@@ -291,6 +291,10 @@ class Settings(BaseModel):
     disabled_connectors: list[str] = Field(default_factory=list)
     enabled_plugins: list[str] = Field(default_factory=list)  # entry-point connector names allowed to load
     auto_approve: list[str] = Field(default_factory=list)  # act tools that run without approval in clean runs (any caller)
+    # Contacts and aliases a model saves from chat (pmjc_contact_set): "pending" waits for the owner's approval in the
+    # dashboard; "direct" saves them at once while the run is clean. Changing a handle an active contact already has
+    # (e.g. a different discord_user_id) always waits for approval.
+    contacts_from_chat: Literal["pending", "direct"] = "pending"
     # Permission level per tool name or glob (pmjc.levels): off | always_ask | ask | auto_clean | auto. Overrides the
     # level a tool ships with, its group and `auto_approve`; pmjc_shell_run and the settings tools stay always_ask
     # (only `off` applies).
